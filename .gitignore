@@ -1,0 +1,15 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+
+# Generated heat maps (regenerate with pitch_heatmap3d.py)
+plots/
+
+# Collected JSON in data/ is intentionally tracked: it is the input to the
+# heat maps and small enough to version.
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
