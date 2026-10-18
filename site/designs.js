@@ -13,7 +13,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_baseline_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       12.4
     ],
@@ -31,7 +31,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_tight_sigma2_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       11.5
     ],
@@ -49,9 +49,9 @@ export const DESIGNS = [
     "thumb": "../plots/design_wide_sigma8_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
-      14.0
+      14
     ],
     "vol": 123.5,
     "grams": 153
@@ -67,11 +67,11 @@ export const DESIGNS = [
     "thumb": "../plots/design_facets_18x12_print.png",
     "tris": 984,
     "size": [
-      180.0,
+      180,
       116.6,
       12.2
     ],
-    "vol": 93.0,
+    "vol": 93,
     "grams": 115
   },
   {
@@ -85,7 +85,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_facets_24x16_print.png",
     "tris": 1696,
     "size": [
-      180.0,
+      180,
       116.6,
       12.6
     ],
@@ -103,7 +103,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_facets_36x23_print.png",
     "tris": 3548,
     "size": [
-      180.0,
+      180,
       116.6,
       12.1
     ],
@@ -121,7 +121,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_levels_12_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       12.3
     ],
@@ -139,7 +139,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_levels_6_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       12.1
     ],
@@ -157,11 +157,11 @@ export const DESIGNS = [
     "thumb": "../plots/design_levels_3_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       11.5
     ],
-    "vol": 97.0,
+    "vol": 97,
     "grams": 120
   },
   {
@@ -175,11 +175,11 @@ export const DESIGNS = [
     "thumb": "../plots/design_levels_6_facets_24x16_print.png",
     "tris": 1696,
     "size": [
-      180.0,
+      180,
       116.6,
       12.7
     ],
-    "vol": 90.0,
+    "vol": 90,
     "grams": 112
   },
   {
@@ -193,7 +193,7 @@ export const DESIGNS = [
     "thumb": "../plots/design_deep_22mm_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       20.6
     ],
@@ -211,11 +211,47 @@ export const DESIGNS = [
     "thumb": "../plots/design_carved_print.png",
     "tris": 464,
     "size": [
-      180.0,
+      180,
       116.6,
       14.5
     ],
     "vol": 251.3,
     "grams": 312
+  },
+  {
+    "id": "facets_36x23_deep",
+    "file": "../models/design_facets_36x23_deep.stl",
+    "thumb": "../plots/design_facets_36x23_deep_print.png",
+    "tris": 3548,
+    "size": [
+      180,
+      116.6,
+      18.6
+    ],
+    "vol": 96.4,
+    "grams": 120,
+    "title": "Fine facets, lifted",
+    "family": "facets",
+    "lossy": false,
+    "note": "Your pick pushed to 20 mm, so more of the faint detail clears a layer height",
+    "flags": "--grid 36x23 --sigma 2.5 --height-mm 20"
+  },
+  {
+    "id": "facets_36x23_clean",
+    "file": "../models/design_facets_36x23_clean.stl",
+    "thumb": "../plots/design_facets_36x23_clean_print.png",
+    "tris": 3548,
+    "size": [
+      180,
+      116.6,
+      11.9
+    ],
+    "vol": 70.7,
+    "grams": 88,
+    "title": "Fine facets, trimmed",
+    "family": "facets",
+    "lossy": true,
+    "note": "Your pick with the sub-layer detail cut flat, for a crisper print",
+    "flags": "--grid 36x23 --sigma 2.5 --cutoff 0.08"
   }
 ];

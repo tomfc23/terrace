@@ -294,6 +294,8 @@ document.addEventListener("keydown", (event) => {
 
 /* ------------------------------ boot ------------------------------ */
 
+document.getElementById("headline").textContent =
+  `${DESIGNS.length} ways to print the same map`;
 renderCards();
 select((designById(location.hash.slice(1)) || designById(chosen) || DESIGNS[0]).id, { hash: true });
 
