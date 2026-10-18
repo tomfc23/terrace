@@ -3,8 +3,9 @@
 __pycache__/
 *.py[cod]
 
-# Generated heat maps (regenerate with pitch_heatmap3d.py)
+# Generated heat maps and printable meshes (regenerate with the scripts)
 plots/
+models/
 
 # Collected JSON in data/ is intentionally tracked: it is the input to the
 # heat maps and small enough to version.
