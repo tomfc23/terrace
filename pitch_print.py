@@ -57,6 +57,7 @@ class Style:
     compression: str = "linear"    # how frequency becomes height
     cutoff: float = 0.0            # ignore cells below this share of the peak
     levels: int | None = None      # discrete terrace count; None = continuous slopes
+    invert: bool = False           # carve the data in as valleys instead of hills
     grid: str = "24x16"            # cells across the 105 x 68 m pitch
     sigma: float = 3.0             # Gaussian smoothing bandwidth, metres
     blurb: str = ""                # what the style is for
@@ -234,10 +235,14 @@ def height_field(surface: np.ndarray, style: Style) -> tuple[np.ndarray, list[st
         raise SystemExit(f"unknown compression {style.compression!r}")
 
     heights = np.clip(norm, 0.0, 1.0) * style.height_mm
+    if style.invert:
+        # Same numbers, opposite polarity: the busiest cell becomes the deepest
+        # point of a solid block. No value is altered, only which way it faces.
+        heights = style.height_mm - heights
     if style.levels and style.levels > 1:
         heights = quantize_heights(heights, style.levels, style.height_mm)
 
-    shallow = int(((heights > 0) & (heights < 0.8)).sum())
+    shallow = 0 if style.invert else int(((heights > 0) & (heights < 0.8)).sum())
     if shallow:
         notes.append(
             f"{shallow} cells ({100 * shallow / heights.size:.0f}% of the pitch) are "
@@ -272,15 +277,16 @@ def render_model(
     ax, heights: np.ndarray, x_edges, y_edges, base_mm: float,
     cmap: str, mono: bool, z_max: float,
 ) -> None:
+
     xs, ys = np.meshgrid(x_edges, y_edges, indexing="ij")
     zs = base_mm + corner_heights(heights)
-    surf = ax.plot_surface(
-        xs, ys, zs, cmap=cmap, linewidth=0, antialiased=True,
-        vmin=base_mm, vmax=z_max,
-    )
     if mono:
-        surf.set_array(np.zeros_like(zs))
-        surf.set_cmap(colormaps["Greys"])
+        # One clay colour with matplotlib's own shading: shape only, no height legend.
+        ax.plot_surface(xs, ys, zs, color="#f0f0f0", shade=True,
+                        linewidth=0, antialiased=True)
+    else:
+        ax.plot_surface(xs, ys, zs, cmap=cmap, vmin=base_mm, vmax=z_max,
+                        linewidth=0, antialiased=True)
     ax.set_zlim(0, z_max)
 
 
@@ -423,6 +429,8 @@ def style_from_args(args: argparse.Namespace, base: Style) -> Style:
         style.cutoff = args.cutoff
     if args.compression:
         style.compression = args.compression
+    if args.invert:
+        style.invert = True
     if args.levels is not None:
         style.levels = args.levels if args.levels > 0 else None
     if args.grid:
@@ -547,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
         target.add_argument("--compression", choices=COMPRESSIONS)
         target.add_argument("--levels", type=int, default=None,
                             help="terrace steps, e.g. 6; 0 or omitted keeps a smooth surface")
+        target.add_argument("--invert", action="store_true",
+                            help="carve the same field in as valleys in a solid block")
         target.add_argument("--grid", help="cells across the pitch length, e.g. 30x19")
         target.add_argument("--sigma", type=float, help="smoothing bandwidth in metres")
         target.add_argument("--cmap", default="turbo")
