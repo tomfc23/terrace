@@ -148,6 +148,7 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
         select.replaceChildren(...options);
       }
 
+      let renderVersion = "";
       const playerInput = $("player");
       const shot = $("shot");
       const example = $("example");
@@ -208,6 +209,7 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
           map,
           grid: "16x10",
           sigma: "3.5",
+          ...(renderVersion ? { v: renderVersion } : {}),
         };
         if (!query.match || !query.player) {
           status.textContent = "Pick a match and type a player name.";
@@ -248,6 +250,7 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
 
           const meta = await api("/api/render/meta", query).catch(() => null);
           const ms = Math.round(performance.now() - started);
+          const size = `${Math.max(1, Math.round(blob.size / 1024))} KB · ${ms} ms (${label})`;
           if (meta) {
             shot.alt = `${meta.map} map for ${meta.player}, ${meta.events} events`;
             caption.textContent =
@@ -255,6 +258,10 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
               `${meta.events === 1 ? "event" : "events"} plotted of ` +
               `${meta.total} · ${meta.grid} grid, σ ${meta.sigma} m · ` +
               `${Math.max(1, Math.round(blob.size / 1024))} KB · ${ms} ms (${label})`;
+          }
+          if (!meta) {
+            shot.alt = `${map} map for ${query.player}`;
+            caption.textContent = `${query.player} — ${map} map · ${size}`;
           }
           status.textContent = "Done.";
         } catch (error) {
@@ -273,7 +280,9 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
 
       (async () => {
         try {
-          const competitions = await api("/api/competitions", {});
+          const response = await fetch(build("/api/competitions", {}));
+          renderVersion = response.headers.get("X-Render-Version") ?? "";
+          const competitions = await response.json();
           fill(
             $("competition"),
             competitions,

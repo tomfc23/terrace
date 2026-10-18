@@ -49,6 +49,9 @@ PITCH_LENGTH_M = ph.PITCH_LENGTH_M
 PITCH_WIDTH_M = ph.PITCH_WIDTH_M
 
 CACHE_CONTROL = "public, max-age=31536000, immutable"
+# Bump when the drawing changes: it is part of the cache key, so old
+# immutable URLs in browser caches stop being reused.
+RENDER_VERSION = 2
 FIXTURE_TTL = 12 * 3600          # fixtures move slowly
 EVENT_TTL = 6 * 3600             # a live match keeps changing
 _lock = threading.Lock()         # matplotlib is not thread-safe
@@ -76,6 +79,14 @@ PASS_TYPES = {1, 2}
 # --------------------------------------------------------------------------- #
 # disk cache
 # --------------------------------------------------------------------------- #
+
+def render_key(match: str, player: str, map_name: str, grid: str, sigma: float) -> str:
+    """Cache key for a rendered map. Includes RENDER_VERSION so a change to the
+    drawing produces a new key instead of serving yesterday's pixels."""
+    return hashlib.sha1(
+        f"v{RENDER_VERSION}|{match}|{player.lower()}|{map_name}|{grid}|{sigma}".encode()
+    ).hexdigest()[:20]
+
 
 def cached_json(name: str, producer: Callable[[], dict], ttl: int) -> dict:
     path = CACHE / f"{name}.json"
@@ -243,8 +254,20 @@ def health() -> dict:
 
 
 @app.get("/api/competitions")
-def competitions() -> list[dict]:
-    return [{"slug": slug, "label": label} for slug, label in COMPETITIONS.items()]
+def competitions() -> Response:
+    """The competition list, plus the render version in a header.
+
+    The client appends that version to image URLs: the responses are immutable,
+    so the only way to retire an old picture is a new URL.
+    """
+    import json as _json
+
+    body = _json.dumps([{"slug": slug, "label": label} for slug, label in COMPETITIONS.items()])
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"X-Render-Version": str(RENDER_VERSION)},
+    )
 
 
 @app.get("/api/teams")
@@ -299,9 +322,7 @@ def render(
     grid: str = "16x10",
     sigma: float = Query(3.5, ge=0, le=20),
 ) -> Response:
-    key = hashlib.sha1(
-        f"{match}|{player.lower()}|{map}|{grid}|{sigma}".encode()
-    ).hexdigest()[:20]
+    key = render_key(match, player, map, grid, sigma)
     etag = f'"{key}"'
 
     def build() -> bytes:
@@ -351,7 +372,7 @@ def render_meta(
 ) -> dict:
     """The facts behind a render, for the caption. Cheap: reads the cached meta."""
     key = hashlib.sha1(
-        f"{match}|{player.lower()}|{map}|{grid}|{sigma}".encode()
+        f"v{RENDER_VERSION}|{match}|{player.lower()}|{map}|{grid}|{sigma}".encode()
     ).hexdigest()[:20]
     path = CACHE / f"meta-{key}.json"
     if not path.exists():
