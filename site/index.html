@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terrain print designs — Wirtz touch map</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="head">
+  <div>
+    <h1>Twelve ways to print the same map</h1>
+    <p class="lede">
+      Every design below is Wirtz's 87 touches from Brentford 1–2 Liverpool, using the same linear
+      height mapping with no cutoff: nothing is added, dropped or re-weighted. Only the display
+      changes — smoothing, facet size, banding, depth and polarity. Spin one in the viewer, then
+      choose it.
+    </p>
+  </div>
+  <p class="hint">
+    Serve this folder from the project root: <code>uv run python -m http.server 8000</code>,
+    then open <code>http://127.0.0.1:8000/site/</code>. Drag to orbit, scroll to zoom,
+    ← → to step through.
+  </p>
+</header>
+
+<main class="split">
+  <section class="viewer" aria-label="3D preview">
+    <div id="stage" class="stage">
+      <div id="stageLoading" class="stage-note">loading mesh…</div>
+    </div>
+    <div class="controls">
+      <button id="btnRotate" class="on" aria-pressed="true">auto-rotate</button>
+      <button id="btnWire" aria-pressed="false">wireframe</button>
+      <button id="btnReset">reset view</button>
+      <label class="exag" title="View only — the mesh itself is never changed">height
+        <input id="exag" type="range" min="1" max="4" step="1" value="2">
+        <span id="exagVal">×2</span></label>
+      <span id="stageMeta" class="stage-meta"></span>
+    </div>
+  </section>
+
+  <aside class="choice" aria-label="Your selection">
+    <h2>Your pick</h2>
+    <p id="choiceEmpty" class="choice-empty">
+      Nothing chosen yet. Use <b>Choose this one</b> on a card and it is remembered here — and in
+      this browser.
+    </p>
+    <div id="choiceBox" hidden>
+      <p class="chosen-chip">chosen</p>
+      <h3 id="choiceTitle"></h3>
+      <code id="choiceId" class="id"></code>
+      <dl class="facts">
+        <div><dt>size</dt><dd id="factSize"></dd></div>
+        <div><dt>solid mass</dt><dd id="factMass"></dd></div>
+        <div><dt>mesh</dt><dd id="factTris"></dd></div>
+        <div><dt>stl</dt><dd id="factFile"></dd></div>
+      </dl>
+      <p class="cmd-label">Rebuild it exactly:</p>
+      <code id="choiceCmd" class="cmd"></code>
+      <div class="choice-actions">
+        <button id="btnCopy">Copy command</button>
+        <button id="btnClear">Clear choice</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<section class="cards" id="cards" aria-label="Designs"></section>
+
+<footer class="foot">
+  <p>
+    Each mesh was verified as written: closed (every edge shared by exactly two triangles), signed
+    volume matching the volume computed from its own height field to 0.00%, and sitting flat on
+    z = 0. Masses assume solid PLA at 1.24 g/cm³ — a slicer at 15% infill will use far less.
+  </p>
+</footer>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "../web/node_modules/three/build/three.module.js",
+    "three/addons/": "../web/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
