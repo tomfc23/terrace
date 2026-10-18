@@ -28,7 +28,8 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
       <h1 class="text-2xl font-normal">Opta heat maps</h1>
       <p class="mt-1 max-w-[62ch] text-sm text-neutral-600">
         Pick a match, a player and a map type. Locations come from the same public
-        Opta feed behind the Opta Analyst widgets, binned on a 105 × 68 m pitch.
+        Opta feed behind the Opta Analyst widgets, binned on a 105 × 68 m pitch and
+        drawn as a surface: height and colour both show how busy that patch was.
       </p>
     </header>
 
@@ -106,7 +107,7 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
             id="shot"
             alt=""
             width="1100"
-            height="726"
+            height="649"
             class="hidden h-auto w-full border border-neutral-300"
           />
         </div>
@@ -119,9 +120,9 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
 
     <footer class="mx-auto mt-10 max-w-[68rem] text-xs text-neutral-600">
       <p>
-        Maps are cached on the server by match, player, map and grid, so a second
-        look at the same picture is a file read. Colour scales with events per cell:
-        the hottest bin is the busiest patch of pitch.
+        The surface is a 3D histogram — height and colour are the same number, events
+        per cell — so the peak is the busiest patch of pitch. Maps are cached on the
+        server by match, player, map and grid, so a second look is a file read.
       </p>
     </footer>
 

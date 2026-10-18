@@ -51,7 +51,7 @@ PITCH_WIDTH_M = ph.PITCH_WIDTH_M
 CACHE_CONTROL = "public, max-age=31536000, immutable"
 # Bump when the drawing changes: it is part of the cache key, so old
 # immutable URLs in browser caches stop being reused.
-RENDER_VERSION = 2
+RENDER_VERSION = 5
 FIXTURE_TTL = 12 * 3600          # fixtures move slowly
 EVENT_TTL = 6 * 3600             # a live match keeps changing
 _lock = threading.Lock()         # matplotlib is not thread-safe
@@ -198,7 +198,7 @@ def points_for(events_payload: dict, player: dict, map_name: str):
 # --------------------------------------------------------------------------- #
 
 def render_webp(xs: np.ndarray, ys: np.ndarray, grid: str, sigma: float) -> bytes:
-    """A flat pitch heat map, WebP, no frame or text — the page carries the words."""
+    """A 3D surface of the same field: colour *and* height are events per cell."""
     bins_x, _, bins_y = grid.lower().partition("x")
     nx, ny = int(bins_x), int(bins_y or 16)
 
@@ -208,25 +208,38 @@ def render_webp(xs: np.ndarray, ys: np.ndarray, grid: str, sigma: float) -> byte
     )
     cell_x, cell_y = PITCH_LENGTH_M / nx, PITCH_WIDTH_M / ny
     surface = ph.smooth_grid(counts, sigma / cell_y, sigma / cell_x)
+    x_centres = (x_edges[:-1] + x_edges[1:]) / 2.0
+    y_centres = (y_edges[:-1] + y_edges[1:]) / 2.0
+    grid_x, grid_y = np.meshgrid(x_centres, y_centres, indexing="ij")
+    z_max = float(surface.max()) or 1.0
 
     with _lock:
-        # A little margin, and a figure ratio that matches the plot box, otherwise
-        # equal-aspect axes get clipped and the outer lines vanish.
-        pad = 2.0
-        plot_w, plot_h = PITCH_LENGTH_M + 2 * pad, PITCH_WIDTH_M + 2 * pad
-        fig, ax = plt.subplots(figsize=(10, 10 * plot_h / plot_w), dpi=110)
-        # The smoothed field is continuous, so interpolate the display rather than
-        # showing the bin edges: same numbers, no blocky staircase.
-        ax.imshow(
-            surface.T, origin="lower", extent=(0, PITCH_LENGTH_M, 0, PITCH_WIDTH_M),
-            cmap="turbo", vmin=0, interpolation="bilinear", aspect="equal",
+        # Fixed slots, no tight bbox: the output is exactly 1100 x 792 every time,
+        # so the page can declare the intrinsic size and never shift.
+        fig = plt.figure(figsize=(10, 5.9), dpi=110)
+        ax = fig.add_axes([0.0, 0.0, 0.87, 1.0], projection="3d")
+        cax = fig.add_axes([0.92, 0.32, 0.013, 0.36])
+
+        artist = ax.plot_surface(
+            grid_x, grid_y, surface, cmap="turbo", linewidth=0, antialiased=True,
+            rstride=1, cstride=1, vmin=0.0, vmax=z_max,
         )
-        ph.draw_pitch_markings(ax, colour="#ffffff", alpha=0.6, three_d=False)
-        ax.set_xlim(-pad, PITCH_LENGTH_M + pad)
-        ax.set_ylim(-pad, PITCH_WIDTH_M + pad)
-        ax.set_aspect("equal")
-        ax.set_axis_off()
-        fig.subplots_adjust(0, 0, 1, 1)
+        ph.draw_pitch_markings(ax, colour="#ffffff", alpha=0.55)
+
+        ax.set_xlim(0, PITCH_LENGTH_M)
+        ax.set_ylim(0, PITCH_WIDTH_M)
+        ax.set_zlim(0, z_max)
+        ax.set_box_aspect((PITCH_LENGTH_M, PITCH_WIDTH_M, PITCH_LENGTH_M * 0.3), zoom=1.2)
+        ax.view_init(elev=32, azim=-58)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_zticks([])
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            axis.pane.set_alpha(0.05)   # faint floor box gives the pitch its extent
+        bar = fig.colorbar(artist, cax=cax)
+        bar.set_label("events per cell", fontsize=8.5, labelpad=4)
+        bar.ax.tick_params(labelsize=8)
+
         buffer = io.BytesIO()
         fig.savefig(buffer, format="webp", pil_kwargs={"quality": 82, "method": 4})
         plt.close(fig)
