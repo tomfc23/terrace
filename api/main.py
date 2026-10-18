@@ -326,6 +326,68 @@ def players(match: str = Query(...)) -> dict:
     return {"match": match, "players": rows}
 
 
+@app.get("/api/geometry")
+def geometry(
+    match: str = Query(...),
+    player: str = Query(...),
+    map: Literal["touch", "shot", "pass"] = "touch",
+    grid: str = "16x10",
+    sigma: float = Query(3.5, ge=0, le=20),
+) -> Response:
+    """The surface as numbers, for the page to draw and spin itself.
+
+    Same pipeline as /api/render, but it returns the binned field instead of an
+    image: a few hundred floats is smaller than a picture and lets the browser
+    rotate it. Cached on disk like everything else.
+    """
+    key = render_key(match, player, map, grid, sigma)
+
+    def build() -> dict:
+        events, lineups = match_payloads(match)
+        resolved = oc.resolve_player(events, lineups, player)
+        xs, ys, total = points_for(events, resolved, map)
+        if xs.size == 0:
+            raise HTTPException(404, f"no {map} locations for {player} in that match")
+
+        bins_x, _, bins_y = grid.lower().partition("x")
+        nx, ny = int(bins_x), int(bins_y or 16)
+        counts, x_edges, y_edges = np.histogram2d(
+            xs, ys, bins=(nx, ny),
+            range=((0.0, PITCH_LENGTH_M), (0.0, PITCH_WIDTH_M)),
+        )
+        cell_x, cell_y = PITCH_LENGTH_M / nx, PITCH_WIDTH_M / ny
+        surface = ph.smooth_grid(counts, sigma / cell_y, sigma / cell_x)
+        return {
+            "shape": [nx, ny],
+            "x": [round(float(v), 2) for v in (x_edges[:-1] + x_edges[1:]) / 2],
+            "y": [round(float(v), 2) for v in (y_edges[:-1] + y_edges[1:]) / 2],
+            "z": [[round(float(v), 4) for v in row] for row in surface],
+            "z_max": round(float(surface.max()), 4),
+            "pitch": [PITCH_LENGTH_M, PITCH_WIDTH_M],
+            "meta": {
+                "player": resolved.get("name", player), "map": map,
+                "events": int(xs.size), "total": int(total),
+                "grid": grid, "sigma": sigma, "match_id": match,
+            },
+        }
+
+    try:
+        payload = cached_json(f"geo-{key}", build, ttl=10 * 365 * 24 * 3600)
+    except HTTPException:
+        raise
+    except RuntimeError as error:
+        raise HTTPException(404, str(error)) from error
+    body = json.dumps(payload)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={
+            "Cache-Control": CACHE_CONTROL,
+            "ETag": f'"{key}"',
+        },
+    )
+
+
 @app.get("/api/render")
 def render(
     request: Request,

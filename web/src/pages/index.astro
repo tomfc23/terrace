@@ -1,8 +1,7 @@
 ---
-import { Picture } from "astro:assets";
-import example from "../assets/example.webp";
 import "../styles/global.css";
 
+// The API host is the only thing that changes between local dev and deployment.
 // Empty means "same origin", which is how FastAPI serves this build in production.
 // For `astro dev` set PUBLIC_API_BASE=http://127.0.0.1:8001.
 const apiBase = import.meta.env.PUBLIC_API_BASE ?? "";
@@ -17,13 +16,13 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
     <title>Opta heat maps</title>
     <meta
       name="description"
-      content="Pick a match, a player and a map type; get a heat map of where they were on the ball."
+      content="Pick a match, a player and a map type; get a 3D heat map of where they were on the ball."
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href={apiBase} crossorigin />
   </head>
 
-  <body class="p-4 sm:p-8">
+  <body class="p-4 sm:p-8" data-api={apiBase}>
     <header class="mx-auto max-w-[68rem]">
       <h1 class="text-2xl font-normal">Opta heat maps</h1>
       <p class="mt-1 max-w-[62ch] text-sm text-neutral-600">
@@ -91,29 +90,15 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
       </form>
 
       <section aria-label="Rendered map">
-        <div id="stage">
-          <div id="example">
-            <Picture
-              src={example}
-              formats={["avif", "webp"]}
-              widths={[420, 760, 1100]}
-              sizes="(min-width: 1024px) 46rem, 100vw"
-              alt="Example touch map: one player, one match"
-              loading="eager"
-              class="block h-auto w-full border border-neutral-300"
-            />
-          </div>
-          <img
-            id="shot"
-            alt=""
-            width="1100"
-            height="649"
-            class="hidden h-auto w-full border border-neutral-300"
-          />
+        <div class="stage" id="stage">
+          <canvas id="canvas" hidden></canvas>
+          <img id="fallback" alt="" hidden />
         </div>
-        <p id="caption" class="mt-2 text-xs text-neutral-600">
-          Nothing rendered yet — that is an example, and the numbers for a real
-          render appear here.
+        <p id="hint" class="mt-1 text-xs text-neutral-600" hidden>
+          Drag to spin, scroll to zoom.
+        </p>
+        <p id="caption" class="mt-1 text-xs text-neutral-600">
+          Nothing rendered yet.
         </p>
       </section>
     </main>
@@ -121,12 +106,14 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
     <footer class="mx-auto mt-10 max-w-[68rem] text-xs text-neutral-600">
       <p>
         The surface is a 3D histogram — height and colour are the same number, events
-        per cell — so the peak is the busiest patch of pitch. Maps are cached on the
-        server by match, player, map and grid, so a second look is a file read.
+        per cell, exaggerated ×4 vertically so the shape reads on a 105 m pitch.
+        Geometry is cached on the server by match, player, map and grid; the page
+        fetches a few hundred numbers rather than a picture and draws them here.
       </p>
     </footer>
 
-    <script define:vars={{ apiBase }}>
+    <script>
+      const apiBase = document.body.dataset.api ?? "";
       const $ = (id) => document.getElementById(id);
       const build = (path, query) => `${apiBase}${path}?${new URLSearchParams(query)}`;
 
@@ -137,7 +124,6 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
         return body;
       }
 
-      /** Replace a select's options, optionally keeping a leading placeholder. */
       function fill(select, items, valueOf, labelOf, placeholder) {
         const options = items.map((item) => {
           const option = document.createElement("option");
@@ -149,13 +135,194 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
         select.replaceChildren(...options);
       }
 
-      let renderVersion = "";
       const playerInput = $("player");
-      const shot = $("shot");
-      const example = $("example");
+      const canvas = $("canvas");
+      const fallback = $("fallback");
+      const stageEl = $("stage");
       const caption = $("caption");
       const status = $("status");
+      const hint = $("hint");
 
+      let renderVersion = "";
+      let scene = null;       // three.js handles, built on first render
+      let surface = null;     // the current mesh
+
+      /* ---------- colour ramp (turbo-ish, 11 stops) ---------- */
+      const HEIGHT_SCALE = 4;   // view only: the peak becomes ~12 m on a 105 m pitch
+
+      const STOPS = [
+        [0.0, 48, 18, 59], [0.1, 70, 107, 227], [0.2, 49, 182, 246],
+        [0.3, 30, 229, 181], [0.4, 74, 251, 110], [0.5, 145, 254, 66],
+        [0.6, 205, 225, 45], [0.7, 247, 166, 42], [0.8, 251, 101, 30],
+        [0.9, 219, 53, 17], [1.0, 122, 4, 3],
+      ];
+      // Vertex colours are linear-sRGB, so sRGB stops must be converted or every
+      // colour comes back washed out.
+      const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+
+      function turbo(t) {
+        const x = Math.min(1, Math.max(0, t));
+        for (let i = 1; i < STOPS.length; i++) {
+          if (x <= STOPS[i][0]) {
+            const [a, ar, ag, ab] = STOPS[i - 1];
+            const [b, br, bg, bb] = STOPS[i];
+            const k = (x - a) / (b - a || 1);
+            return [
+              toLinear((ar + (br - ar) * k) / 255),
+              toLinear((ag + (bg - ag) * k) / 255),
+              toLinear((ab + (bb - ab) * k) / 255),
+            ];
+          }
+        }
+        return [1, 1, 1];
+      }
+
+      /* ---------- three.js stage, only built when first needed ---------- */
+      async function ensureScene() {
+        if (scene) return scene;
+        const THREE = await import("three");
+        const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
+
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+        const view = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(38, 1, 1, 4000);
+        const controls = new OrbitControls(camera, canvas);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.09;
+        controls.enablePan = false;
+        controls.minDistance = 70;
+        controls.maxDistance = 520;
+        controls.maxPolarAngle = Math.PI * 0.49;
+
+        view.add(new THREE.AmbientLight(0xffffff, 0.42));
+        const key = new THREE.DirectionalLight(0xffffff, 0.85);
+        key.position.set(70, 130, 90);
+        view.add(key);
+        const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+        rim.position.set(-90, 70, -70);
+        view.add(rim);
+
+        // Pitch markings, flat on the floor: they are what makes it read as a pitch.
+        const lines = [];
+        const line = (x1, y1, x2, y2) => lines.push(x1, 0.05, y1, x2, 0.05, y2);
+        line(0, 0, 105, 0); line(105, 0, 105, 68);
+        line(105, 68, 0, 68); line(0, 68, 0, 0);
+        line(52.5, 0, 52.5, 68);
+        for (let a = 0; a <= 64; a++) {
+          const t1 = (a / 64) * Math.PI * 2, t2 = ((a + 1) / 64) * Math.PI * 2;
+          line(52.5 + 9.15 * Math.cos(t1), 34 + 9.15 * Math.sin(t1),
+               52.5 + 9.15 * Math.cos(t2), 34 + 9.15 * Math.sin(t2));
+        }
+        for (const side of [0, 1]) {
+          const x0 = side ? 105 : 0, dir = side ? -1 : 1;
+          const boxes = [[16.5, 40.32], [5.5, 18.32]];
+          for (const [depth, width] of boxes) {
+            const y1 = 34 - width / 2, y2 = 34 + width / 2;
+            line(x0, y1, x0 + dir * depth, y1);
+            line(x0 + dir * depth, y1, x0 + dir * depth, y2);
+            line(x0 + dir * depth, y2, x0, y2);
+          }
+          line(x0 + dir * 11, 34, x0 + dir * 11.6, 34);
+        }
+        const lineGeo = new THREE.BufferGeometry();
+        lineGeo.setAttribute("position", new THREE.Float32BufferAttribute(lines, 3));
+        view.add(new THREE.LineSegments(
+          lineGeo, new THREE.LineBasicMaterial({ color: 0x9aa0a6, transparent: true, opacity: 0.75 }),
+        ));
+
+        const floor = new THREE.Mesh(
+          new THREE.PlaneGeometry(105, 68),
+          new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }),
+        );
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(52.5, -0.05, 34);
+        view.add(floor);
+
+        const material = new THREE.MeshStandardMaterial({
+          vertexColors: true, roughness: 0.9, metalness: 0.0, flatShading: false,
+        });
+
+        function fit() {
+          const w = stageEl.clientWidth || 1;
+          const h = stageEl.clientHeight || 1;
+          renderer.setSize(w, h, false);
+          camera.aspect = w / h;
+          camera.updateProjectionMatrix();
+        }
+        new ResizeObserver(fit).observe(stageEl);
+        fit();
+
+        camera.position.set(118, 104, 118);
+        controls.target.set(52.5, 6, 34);
+        controls.update();
+
+        let visible = true;
+        document.addEventListener("visibilitychange", () => { visible = !document.hidden; });
+        (function tick() {
+          if (visible) {
+            controls.update();
+            renderer.render(view, camera);
+          }
+          requestAnimationFrame(tick);
+        })();
+
+        scene = { THREE, renderer, view, camera, controls, material, fit };
+        return scene;
+      }
+
+      /* ---------- geometry -> mesh ---------- */
+      function drawGeometry(geo) {
+        const { THREE, view, material } = scene;
+        const [nx, ny] = geo.shape;
+        const zMax = geo.z_max || 1;
+        const positions = [];
+        const colours = [];
+        const indices = [];
+
+        for (let i = 0; i < nx; i++) {
+          for (let j = 0; j < ny; j++) {
+            const z = geo.z[i][j];
+            positions.push(geo.x[i], z * HEIGHT_SCALE, geo.y[j]);   // three.js: Y is up
+            const [r, g, b] = turbo(z / zMax);
+            colours.push(r, g, b);
+          }
+        }
+        for (let i = 0; i < nx - 1; i++) {
+          for (let j = 0; j < ny - 1; j++) {
+            const a = i * ny + j, b = a + ny, c = b + 1, d = a + 1;
+            indices.push(a, d, b, d, c, b);          // wound so the normals face up
+          }
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 3));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+
+        if (surface) { view.remove(surface); surface.geometry.dispose(); }
+        surface = new THREE.Mesh(geometry, material);
+        view.add(surface);
+      }
+
+      /* ---------- fallback: a flat picture, if WebGL is out ---------- */
+      async function showFallback(query) {
+        const response = await fetch(build("/api/render", query));
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail || `render failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        if (fallback.src.startsWith("blob:")) URL.revokeObjectURL(fallback.src);
+        fallback.src = URL.createObjectURL(blob);
+        fallback.hidden = false;
+        canvas.hidden = true;
+        hint.hidden = true;
+      }
+
+      /* ---------- wiring ---------- */
       async function loadTeams() {
         const teams = await api("/api/teams", { competition: $("competition").value });
         const select = $("team");
@@ -220,50 +387,23 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
         const started = performance.now();
         status.textContent = "Rendering…";
         try {
-          const response = await fetch(build("/api/render", query));
-          if (!response.ok) {
-            const body = await response.json().catch(() => ({}));
-            throw new Error(body.detail || `render failed (${response.status})`);
+          const geo = await api("/api/geometry", query);
+          try {
+            await ensureScene();
+            drawGeometry(geo);
+            canvas.hidden = false;
+            fallback.hidden = true;
+            hint.hidden = false;
+          } catch {
+            await showFallback(query);   // no WebGL: settle for a picture
           }
-          const blob = await response.blob();
-          // Three honest states: your browser's cache, the server's cache, or freshly drawn.
-          const entry = performance.getEntriesByName(response.url).at(-1);
-          const browserCached = Boolean(entry && entry.transferSize === 0 && entry.decodedBodySize > 0);
-          const label = browserCached
-            ? "cached in your browser"
-            : response.headers.get("X-Render") === "disk"
-              ? "from server cache"
-              : "newly drawn";
 
-          const objectUrl = URL.createObjectURL(blob);
-          const previous = shot.src;
-          await new Promise((resolve, reject) => {
-            shot.onload = resolve;
-            shot.onerror = () => reject(new Error("the image would not decode"));
-            shot.src = objectUrl;
-          });
-          if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
-
-          example.classList.add("hidden");
-          shot.classList.remove("hidden", "fade-in");
-          void shot.offsetWidth; // restart the animation
-          shot.classList.add("fade-in");
-
-          const meta = await api("/api/render/meta", query).catch(() => null);
           const ms = Math.round(performance.now() - started);
-          const size = `${Math.max(1, Math.round(blob.size / 1024))} KB · ${ms} ms (${label})`;
-          if (meta) {
-            shot.alt = `${meta.map} map for ${meta.player}, ${meta.events} events`;
-            caption.textContent =
-              `${meta.player} — ${meta.map} map · ${meta.events} ` +
-              `${meta.events === 1 ? "event" : "events"} plotted of ` +
-              `${meta.total} · ${meta.grid} grid, σ ${meta.sigma} m · ` +
-              `${Math.max(1, Math.round(blob.size / 1024))} KB · ${ms} ms (${label})`;
-          }
-          if (!meta) {
-            shot.alt = `${map} map for ${query.player}`;
-            caption.textContent = `${query.player} — ${map} map · ${size}`;
-          }
+          const { meta } = geo;
+          caption.textContent =
+            `${meta.player} — ${meta.map} map · ${meta.events} ` +
+            `${meta.events === 1 ? "event" : "events"} plotted of ${meta.total} · ` +
+            `${meta.grid} grid, σ ${meta.sigma} m · ${ms} ms`;
           status.textContent = "Done.";
         } catch (error) {
           status.textContent = error.message;
