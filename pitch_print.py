@@ -466,7 +466,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"  wrote {stl}")
 
     if not args.no_preview:
-        png = Path(args.preview) if args.preview else PLOT_DIR / f"{stem}_{args.style}_print.png"
+        png = Path(args.preview) if args.preview else PLOT_DIR / f"{stem}_print.png"
         preview_figure(
             [{"title": f"{args.style} — {build.size_mm()[2]:.0f} mm tall",
               "heights": build.heights, "x_edges": build.x_edges,
