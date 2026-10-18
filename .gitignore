@@ -14,3 +14,11 @@ models/
 .DS_Store
 .idea/
 .vscode/
+
+# Astro frontend (web/): deps, build output and caches are all generated
+web/node_modules/
+web/dist/
+web/.astro/
+
+# FastAPI disk cache (match feeds and rendered maps)
+api/.cache/

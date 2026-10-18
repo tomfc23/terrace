@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Plain by default: white page, black text, system fonts, nothing decorative. */
+html {
+  color-scheme: light;
+}
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  background: #fff;
+  color: #111;
+}
+a {
+  color: #0000ee;
+}
+
+/* The one animation: a new picture arrives rather than snapping in. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-in {
+  animation: rise-in 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in {
+    animation: none;
+  }
+}

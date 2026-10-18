@@ -1,0 +1,293 @@
+---
+import { Picture } from "astro:assets";
+import example from "../assets/example.webp";
+import "../styles/global.css";
+
+// Empty means "same origin", which is how FastAPI serves this build in production.
+// For `astro dev` set PUBLIC_API_BASE=http://127.0.0.1:8001.
+const apiBase = import.meta.env.PUBLIC_API_BASE ?? "";
+const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Opta heat maps</title>
+    <meta
+      name="description"
+      content="Pick a match, a player and a map type; get a heat map of where they were on the ball."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href={apiBase} crossorigin />
+  </head>
+
+  <body class="p-4 sm:p-8">
+    <header class="mx-auto max-w-[68rem]">
+      <h1 class="text-2xl font-normal">Opta heat maps</h1>
+      <p class="mt-1 max-w-[62ch] text-sm text-neutral-600">
+        Pick a match, a player and a map type. Locations come from the same public
+        Opta feed behind the Opta Analyst widgets, binned on a 105 × 68 m pitch.
+      </p>
+    </header>
+
+    <main class="mx-auto mt-6 grid max-w-[68rem] gap-8 lg:grid-cols-[20rem_1fr]">
+      <form id="controls" class="grid content-start gap-3 text-sm">
+        <label class="grid gap-1">
+          Competition
+          <select id="competition" class={field}></select>
+        </label>
+
+        <label class="grid gap-1">
+          Team
+          <select id="team" class={field}></select>
+        </label>
+
+        <label class="grid gap-1">
+          Match
+          <select id="match" class={field}></select>
+        </label>
+
+        <label class="grid gap-1">
+          Player
+          <input
+            id="player"
+            class={field}
+            list="player-list"
+            placeholder="type a name"
+            autocomplete="off"
+            required
+          />
+          <datalist id="player-list"></datalist>
+        </label>
+
+        <div class="grid gap-1">
+          <span>Map</span>
+          <label class="flex items-baseline gap-2"
+            ><input type="radio" name="map" value="touch" checked /> touch
+            <span class="text-neutral-600">— every on-ball action</span></label
+          >
+          <label class="flex items-baseline gap-2"
+            ><input type="radio" name="map" value="shot" /> shot
+            <span class="text-neutral-600">— attempts only</span></label
+          >
+          <label class="flex items-baseline gap-2"
+            ><input type="radio" name="map" value="pass" /> pass
+            <span class="text-neutral-600">— passes played</span></label
+          >
+        </div>
+
+        <button
+          type="submit"
+          class="mt-1 w-full border border-neutral-900 bg-neutral-900 px-3 py-2 text-white"
+        >
+          Render map
+        </button>
+        <p id="status" class="min-h-[1.25rem] text-xs text-neutral-600" role="status">
+          Loading matches…
+        </p>
+      </form>
+
+      <section aria-label="Rendered map">
+        <div id="stage">
+          <div id="example">
+            <Picture
+              src={example}
+              formats={["avif", "webp"]}
+              widths={[420, 760, 1100]}
+              sizes="(min-width: 1024px) 46rem, 100vw"
+              alt="Example touch map: one player, one match"
+              loading="eager"
+              class="block h-auto w-full border border-neutral-300"
+            />
+          </div>
+          <img
+            id="shot"
+            alt=""
+            width="1100"
+            height="726"
+            class="hidden h-auto w-full border border-neutral-300"
+          />
+        </div>
+        <p id="caption" class="mt-2 text-xs text-neutral-600">
+          Nothing rendered yet — that is an example, and the numbers for a real
+          render appear here.
+        </p>
+      </section>
+    </main>
+
+    <footer class="mx-auto mt-10 max-w-[68rem] text-xs text-neutral-600">
+      <p>
+        Maps are cached on the server by match, player, map and grid, so a second
+        look at the same picture is a file read. Colour scales with events per cell:
+        the hottest bin is the busiest patch of pitch.
+      </p>
+    </footer>
+
+    <script define:vars={{ apiBase }}>
+      const $ = (id) => document.getElementById(id);
+      const build = (path, query) => `${apiBase}${path}?${new URLSearchParams(query)}`;
+
+      async function api(path, query) {
+        const response = await fetch(build(path, query));
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || response.statusText);
+        return body;
+      }
+
+      /** Replace a select's options, optionally keeping a leading placeholder. */
+      function fill(select, items, valueOf, labelOf, placeholder) {
+        const options = items.map((item) => {
+          const option = document.createElement("option");
+          option.value = valueOf(item);
+          option.textContent = labelOf(item);
+          return option;
+        });
+        if (placeholder) options.unshift(new Option(placeholder.label, placeholder.value));
+        select.replaceChildren(...options);
+      }
+
+      const playerInput = $("player");
+      const shot = $("shot");
+      const example = $("example");
+      const caption = $("caption");
+      const status = $("status");
+
+      async function loadTeams() {
+        const teams = await api("/api/teams", { competition: $("competition").value });
+        const select = $("team");
+        const previous = select.value;
+        fill(select, teams.teams, (team) => team, (team) => team, {
+          label: "any team",
+          value: "",
+        });
+        if (previous) select.value = previous;
+      }
+
+      async function loadMatches() {
+        const team = $("team").value;
+        const matches = await api("/api/matches", {
+          competition: $("competition").value,
+          ...(team ? { team } : {}),
+        });
+        fill(
+          $("match"),
+          matches,
+          (match) => match.match_id,
+          (match) => `${match.date} — ${match.home} v ${match.away}`,
+        );
+        await loadPlayers();
+      }
+
+      async function loadPlayers() {
+        const match = $("match").value;
+        if (!match) return;
+        try {
+          const { players } = await api("/api/players", { match });
+          fill(
+            $("player-list"),
+            players.slice(0, 80),
+            (player) => player.name,
+            (player) => `${player.name} (${player.team}, ${player.events})`,
+          );
+          if (!playerInput.value && players.length) {
+            playerInput.placeholder = `e.g. ${players[0].name}`;
+          }
+        } catch {
+          /* suggestions are a nicety; rendering works without them */
+        }
+      }
+
+      async function render(event) {
+        event.preventDefault();
+        const map = document.querySelector('input[name="map"]:checked').value;
+        const query = {
+          match: $("match").value,
+          player: playerInput.value.trim(),
+          map,
+          grid: "16x10",
+          sigma: "3.5",
+        };
+        if (!query.match || !query.player) {
+          status.textContent = "Pick a match and type a player name.";
+          return;
+        }
+
+        const started = performance.now();
+        status.textContent = "Rendering…";
+        try {
+          const response = await fetch(build("/api/render", query));
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.detail || `render failed (${response.status})`);
+          }
+          const blob = await response.blob();
+          // Three honest states: your browser's cache, the server's cache, or freshly drawn.
+          const entry = performance.getEntriesByName(response.url).at(-1);
+          const browserCached = Boolean(entry && entry.transferSize === 0 && entry.decodedBodySize > 0);
+          const label = browserCached
+            ? "cached in your browser"
+            : response.headers.get("X-Render") === "disk"
+              ? "from server cache"
+              : "newly drawn";
+
+          const objectUrl = URL.createObjectURL(blob);
+          const previous = shot.src;
+          await new Promise((resolve, reject) => {
+            shot.onload = resolve;
+            shot.onerror = () => reject(new Error("the image would not decode"));
+            shot.src = objectUrl;
+          });
+          if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
+
+          example.classList.add("hidden");
+          shot.classList.remove("hidden", "fade-in");
+          void shot.offsetWidth; // restart the animation
+          shot.classList.add("fade-in");
+
+          const meta = await api("/api/render/meta", query).catch(() => null);
+          const ms = Math.round(performance.now() - started);
+          if (meta) {
+            shot.alt = `${meta.map} map for ${meta.player}, ${meta.events} events`;
+            caption.textContent =
+              `${meta.player} — ${meta.map} map · ${meta.events} ` +
+              `${meta.events === 1 ? "event" : "events"} plotted of ` +
+              `${meta.total} · ${meta.grid} grid, σ ${meta.sigma} m · ` +
+              `${Math.max(1, Math.round(blob.size / 1024))} KB · ${ms} ms (${label})`;
+          }
+          status.textContent = "Done.";
+        } catch (error) {
+          status.textContent = error.message;
+          caption.textContent = "No map to show for that combination.";
+        }
+      }
+
+      $("controls").addEventListener("submit", render);
+      $("competition").addEventListener("change", async () => {
+        await loadTeams();
+        await loadMatches();
+      });
+      $("team").addEventListener("change", loadMatches);
+      $("match").addEventListener("change", loadPlayers);
+
+      (async () => {
+        try {
+          const competitions = await api("/api/competitions", {});
+          fill(
+            $("competition"),
+            competitions,
+            (competition) => competition.slug,
+            (competition) => competition.label,
+          );
+          $("competition").value = "premier-league";
+          await loadTeams();
+          await loadMatches();
+          status.textContent = "Ready.";
+        } catch (error) {
+          status.textContent = `API unreachable at ${apiBase} — ${error.message}`;
+        }
+      })();
+    </script>
+  </body>
+</html>

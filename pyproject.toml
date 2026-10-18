@@ -3,7 +3,10 @@ name = "soccer-modeling"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi>=0.146.0",
     "matplotlib>=3.10.9",
     "numpy>=2.2.6",
+    "pillow>=12.3.0",
+    "uvicorn[standard]>=0.54.0",
 ]
 description = "Opta data collection and 3D frequency heat maps"
