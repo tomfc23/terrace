@@ -42,7 +42,6 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless-safe; --show re-targets the interactive backend
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib import cm  # noqa: E402
 
 PITCH_LENGTH_M = 105.0
 PITCH_WIDTH_M = 68.0
@@ -395,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list(args)
 
     if args.show:
-        matplotlib.use("TkAgg" if sys.platform != "darwin" else "MacOSX")
+        # Agg is the default so this file runs headless; only --show needs a window.
+        try:
+            plt.switch_backend("MacOSX" if sys.platform == "darwin" else "TkAgg")
+        except Exception as error:  # no display / no GUI toolkit installed
+            print(f"note: no interactive window ({error}); writing PNGs only", file=sys.stderr)
 
     bins_x, _, bins_y = args.grid.lower().partition("x")
     bins_x, bins_y = int(bins_x), int(bins_y or 16)
