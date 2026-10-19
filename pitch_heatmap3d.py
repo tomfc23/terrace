@@ -98,7 +98,7 @@ def read_points(path: Path, include_pass_ends: bool = False) -> tuple[list[Event
         x, y = _number(point.get("x_m")), _number(point.get("y_m"))
         if x is None or y is None:
             x, y = _number(point.get("x")), _number(point.get("y"))
-            if x is not None:
+            if x is not None and y is not None:
                 x, y = x * PITCH_LENGTH_M / 100.0, y * PITCH_WIDTH_M / 100.0
         if x is None or y is None:
             continue
@@ -191,7 +191,7 @@ def _blur_along(grid: np.ndarray, sigma_cells: float, axis: int) -> np.ndarray:
     pad = len(kernel) // 2
     pads = [(0, 0), (0, 0)]
     pads[axis] = (pad, pad)
-    padded = np.pad(grid, pads, mode="edge")
+    padded = np.pad(grid, pads, mode="symmetric")
     return np.apply_along_axis(
         lambda line: np.convolve(line, kernel, mode="valid"), axis, padded
     )
@@ -224,6 +224,16 @@ def build_surface(rows: list[EventRow], bins_x: int, bins_y: int, sigma_m: float
     surface = smooth_grid(counts, sigma_m / cell_y, sigma_m / cell_x)
     grid_x, grid_y = np.meshgrid(x_centres, y_centres, indexing="ij")
     return grid_x, grid_y, surface, counts
+
+
+def parse_grid(grid: str) -> tuple[int, int]:
+    match = re.fullmatch(r"([0-9]+)(?:x([0-9]+))?", grid.lower())
+    if not match:
+        raise ValueError("grid must be length x width, for example 24x16")
+    nx, ny = int(match[1]), int(match[2] or 16)
+    if not (2 <= nx <= 256 and 2 <= ny <= 256) or nx * ny > 16384:
+        raise ValueError("grid axes must be 2–256 cells, with at most 16384 cells total")
+    return nx, ny
 
 
 # --------------------------------------------------------------------------- #
@@ -400,8 +410,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as error:  # no display / no GUI toolkit installed
             print(f"note: no interactive window ({error}); writing PNGs only", file=sys.stderr)
 
-    bins_x, _, bins_y = args.grid.lower().partition("x")
-    bins_x, bins_y = int(bins_x), int(bins_y or 16)
+    try:
+        bins_x, bins_y = parse_grid(args.grid)
+    except ValueError as error:
+        parser.error(str(error))
 
     files = discover_files(
         Path(args.data), args.player, args.maps, args.matches, args.all

@@ -193,6 +193,8 @@ def analytic_volume_mm3(heights: np.ndarray, x_edges, y_edges, base_mm: float) -
 def write_stl(path: Path, mesh: Mesh) -> Path:
     """Binary STL, normals computed per facet."""
     tris = mesh.array()
+    if not tris.size or not np.isfinite(tris).all() or not mesh.is_closed()[0] or mesh.signed_volume_mm3() <= 0:
+        raise ValueError("refusing to export an invalid or open mesh")
     normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
     normals = np.divide(normals, lengths, out=np.zeros_like(normals), where=lengths > 0)
@@ -362,6 +364,12 @@ class Build:
 
 def make_build(surface: np.ndarray, style_name: str, style: Style,
                size_mm: float) -> Build:
+    if not all(np.isfinite(value) and value > 0 for value in (size_mm, style.base_mm, style.height_mm)):
+        raise ValueError("print size, base thickness and relief height must be positive finite numbers")
+    if not np.isfinite(style.sigma) or style.sigma < 0 or not 0 <= style.cutoff < 1:
+        raise ValueError("sigma must be nonnegative and cutoff must be between 0 and 1 (exclusive)")
+    if style.levels is not None and style.levels < 2:
+        raise ValueError("terraces require at least two levels")
     heights, notes = height_field(surface, style)
     nx, ny = surface.shape
     width_mm = size_mm * ph.PITCH_WIDTH_M / ph.PITCH_LENGTH_M
@@ -370,11 +378,15 @@ def make_build(surface: np.ndarray, style_name: str, style: Style,
 
     mesh = build_smooth_mesh(heights, x_edges, y_edges, style.base_mm)
     closed, bad = mesh.is_closed()
+    volume = mesh.signed_volume_mm3()
+    expected = analytic_volume_mm3(heights, x_edges, y_edges, style.base_mm)
+    if not closed or not np.isfinite(volume) or volume <= 0 or not np.isclose(volume, expected, rtol=1e-6):
+        raise ValueError("mesh failed its closed-solid or volume check; no STL was written")
     return Build(
         style_name=style_name, style=style, heights=heights,
         x_edges=x_edges, y_edges=y_edges, mesh=mesh,
-        mesh_volume=mesh.signed_volume_mm3(),
-        expected_volume=analytic_volume_mm3(heights, x_edges, y_edges, style.base_mm),
+        mesh_volume=volume,
+        expected_volume=expected,
         closed=closed, open_edges=bad, notes=notes,
     )
 
@@ -409,8 +421,7 @@ def gather_surface(args: argparse.Namespace):
         rows.extend(file_rows)
     if not rows:
         raise SystemExit("the selected files contain no on-pitch locations")
-    bins_x, _, bins_y = args.grid.lower().partition("x") if args.grid else ("24", "x", "16")
-    bins_x, bins_y = int(bins_x), int(bins_y)
+    bins_x, bins_y = ph.parse_grid(args.grid or "24x16")
     grid_x, grid_y, surface, _counts = ph.build_surface(rows, bins_x, bins_y, args.sigma)
     del grid_x, grid_y
     players = sorted({r.player for r in rows})
@@ -440,11 +451,6 @@ def style_from_args(args: argparse.Namespace, base: Style) -> Style:
     return style
 
 
-def grid_dims(style: Style) -> tuple[int, int]:
-    bins_x, _, bins_y = style.grid.lower().partition("x")
-    return int(bins_x), int(bins_y or bins_x)
-
-
 def cmd_styles(args: argparse.Namespace) -> int:
     print("style      height  base  compression  cutoff  terraces  grid    sigma  what it is")
     for name, style in STYLES.items():
@@ -462,7 +468,6 @@ def cmd_styles(args: argparse.Namespace) -> int:
 def cmd_build(args: argparse.Namespace) -> int:
     base = STYLES[args.style]
     style = style_from_args(args, base)
-    width_mm = args.size_mm * ph.PITCH_WIDTH_M / ph.PITCH_LENGTH_M
     surface, label, maps, file_count = gather_surface_for(style, args)
     build = make_build(surface, args.style, style, args.size_mm)
     print(f"{label} — {' + '.join(maps)} map from {file_count} file(s)")
@@ -587,7 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         args.style = "terrain"
     try:
         return args.func(args)
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

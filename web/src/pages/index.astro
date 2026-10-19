@@ -5,7 +5,6 @@ import "../styles/global.css";
 // Empty means "same origin", which is how FastAPI serves this build in production.
 // For `astro dev` set PUBLIC_API_BASE=http://127.0.0.1:8001.
 const apiBase = import.meta.env.PUBLIC_API_BASE ?? "";
-const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
 ---
 
 <!doctype html>
@@ -22,103 +21,80 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
     <link rel="preconnect" href={apiBase} crossorigin />
   </head>
 
-  <body class="p-4 sm:p-8" data-api={apiBase}>
-    <header class="mx-auto max-w-[68rem]">
-      <h1 class="text-2xl font-normal">Opta heat maps</h1>
-      <p class="mt-1 max-w-[62ch] text-sm text-neutral-600">
-        Pick a match, a player and a map type. Locations come from the same public
-        Opta feed behind the Opta Analyst widgets, binned on a 105 × 68 m pitch and
-        drawn as a surface: height and colour both show how busy that patch was.
-      </p>
+  <body data-api={apiBase}>
+    <header class="app-header">
+      <h1>Opta heat maps</h1>
+      <label class="league-picker">
+        <span class="sr-only">Competition</span>
+        <select id="competition" aria-label="Competition" disabled></select>
+      </label>
     </header>
 
-    <main class="mx-auto mt-6 grid max-w-[68rem] gap-8 lg:grid-cols-[20rem_1fr]">
-      <form id="controls" class="grid content-start gap-3 text-sm">
-        <label class="grid gap-1">
-          Competition
-          <select id="competition" class={field}></select>
-        </label>
-
-        <label class="grid gap-1">
-          Team
-          <select id="team" class={field}></select>
-        </label>
-
-        <label class="grid gap-1">
-          Match
-          <select id="match" class={field}></select>
-        </label>
-
-        <label class="grid gap-1">
-          Player
-          <input
-            id="player"
-            class={field}
-            list="player-list"
-            placeholder="type a name"
-            autocomplete="off"
-            required
-          />
-          <datalist id="player-list"></datalist>
-        </label>
-
-        <div class="grid gap-1">
-          <span>Map</span>
-          <label class="flex items-baseline gap-2"
-            ><input type="radio" name="map" value="touch" checked /> touch
-            <span class="text-neutral-600">— every on-ball action</span></label
-          >
-          <label class="flex items-baseline gap-2"
-            ><input type="radio" name="map" value="shot" /> shot
-            <span class="text-neutral-600">— attempts only</span></label
-          >
-          <label class="flex items-baseline gap-2"
-            ><input type="radio" name="map" value="pass" /> pass
-            <span class="text-neutral-600">— passes played</span></label
-          >
+    <main class="app-main">
+      <form id="controls" class="selection-bar">
+        <div class="match-picker">
+          <label for="match">Match</label>
+          <div class="match-fields">
+            <input id="match-search" type="search" aria-label="Filter matches" placeholder="Find team or date" disabled />
+            <select id="match" disabled><option value="">Loading matches…</option></select>
+          </div>
         </div>
-
-        <button
-          type="submit"
-          class="mt-1 w-full border border-neutral-900 bg-neutral-900 px-3 py-2 text-white"
-        >
-          Render map
-        </button>
-        <p id="status" class="min-h-[1.25rem] text-xs text-neutral-600" role="status">
-          Loading matches…
-        </p>
+        <label class="player-picker">Player
+          <select id="player" disabled><option value="">Choose a match</option></select>
+        </label>
       </form>
 
-      <section aria-label="Rendered map">
-        <div class="stage" id="stage">
-          <canvas id="canvas" hidden></canvas>
-          <img id="fallback" alt="" hidden />
+      <section aria-label="3D model">
+        <div class="model-toolbar">
+          <fieldset class="map-options">
+            <legend class="sr-only">Map type</legend>
+            <label><input type="radio" name="map" value="touch" checked /><span>Touches</span></label>
+            <label><input type="radio" name="map" value="pass" /><span>Passes</span></label>
+          </fieldset>
+          <div class="status-line">
+            <p id="status" role="status">Loading…</p>
+            <button id="retry" type="button" hidden>Retry</button>
+          </div>
         </div>
-        <p id="hint" class="mt-1 text-xs text-neutral-600" hidden>
-          Drag to spin, scroll to zoom.
-        </p>
-        <p id="caption" class="mt-1 text-xs text-neutral-600">
-          Nothing rendered yet.
-        </p>
+        <div class="stage" id="stage" aria-busy="true">
+          <canvas id="canvas" aria-label="Interactive 3D heat map" hidden></canvas>
+          <img id="fallback" alt="Heat map preview" hidden />
+          <p id="empty" class="stage-empty">Loading model…</p>
+        </div>
+        <div class="model-caption">
+          <p id="caption"></p>
+          <p id="hint" hidden>Drag to rotate · Scroll to zoom</p>
+        </div>
+        <div class="model-actions">
+          <div class="preview-options">
+            <label class="edge-toggle">
+              <input id="rounded-edges" type="checkbox" role="switch" checked disabled /> Rounded edges
+            </label>
+            <div class="monochrome-controls">
+              <label class="edge-toggle">
+                <input id="monochrome" type="checkbox" disabled /> Monochrome
+              </label>
+              <input id="preview-color" type="color" value="#183c73" aria-label="Monochrome color" title="Preview color" disabled />
+            </div>
+            <div class="print-dimensions" role="group" aria-label="Print dimensions">
+              <label>Units<select id="print-units"><option value="mm">mm</option><option value="cm">cm</option><option value="in">inches</option></select></label>
+              <label>Length<input id="print-length" type="number" min="10" max="1000" step="any" value="180" required /></label>
+              <label>Width<input id="print-width" type="number" min="1" max="1000" step="any" value="123.8" required /></label>
+              <label>Base<input id="base-thickness" type="number" min="0.2" max="50" step="any" value="3" required /></label>
+            </div>
+          </div>
+          <button id="export" type="button" class="export-button" disabled>Download STL</button>
+        </div>
       </section>
     </main>
-
-    <footer class="mx-auto mt-10 max-w-[68rem] text-xs text-neutral-600">
-      <p>
-        The surface is a 3D histogram — height and colour are the same number, events
-        per cell, exaggerated ×4 vertically so the shape reads on a 105 m pitch.
-        Geometry is cached on the server by match, player, map and grid; the page
-        fetches a few hundred numbers rather than a picture and draws them here.
-      </p>
-    </footer>
 
     <script>
       const apiBase = document.body.dataset.api ?? "";
       const $ = (id) => document.getElementById(id);
       const build = (path, query) => `${apiBase}${path}?${new URLSearchParams(query)}`;
 
-      async function api(path, query) {
-        const response = await fetch(build(path, query));
+      async function api(path, query, signal) {
+        const response = await fetch(build(path, query), { signal });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.detail || response.statusText);
         return body;
@@ -142,13 +118,33 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
       const caption = $("caption");
       const status = $("status");
       const hint = $("hint");
+      const matchSelect = $("match");
+      const matchSearch = $("match-search");
+      let matches = [];
+      let activeRequest = null;
+      let searchTimer;
 
       let renderVersion = "";
+      let scenePromise = null;
       let scene = null;       // three.js handles, built on first render
       let surface = null;     // the current mesh
+      let currentGeo = null;
+      const exportButton = $("export");
+      const roundedEdges = $("rounded-edges");
+      const monochrome = $("monochrome");
+      const previewColor = $("preview-color");
+      const printLength = $("print-length");
+      const printWidth = $("print-width");
+      const baseThickness = $("base-thickness");
+      const dimensionInputs = [printLength, printWidth, baseThickness];
+      const printUnits = $("print-units");
+      const unitScales = { mm: 1, cm: 10, in: 25.4 };
+      let selectedUnit = "mm";
+      let printSettings = { length: 180, base: 3 };
+      const unitScale = () => unitScales[selectedUnit];
+      const displayDimension = mm => String(Number((mm / unitScale()).toFixed(4)));
 
       /* ---------- colour ramp (turbo-ish, 11 stops) ---------- */
-      const HEIGHT_SCALE = 4;   // view only: the peak becomes ~12 m on a 105 m pitch
 
       const STOPS = [
         [0.0, 48, 18, 59], [0.1, 70, 107, 227], [0.2, 49, 182, 246],
@@ -179,8 +175,16 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
 
       /* ---------- three.js stage, only built when first needed ---------- */
       async function ensureScene() {
+        if (!scenePromise) {
+          scenePromise = createScene().catch(error => { scenePromise = null; throw error; });
+        }
+        return scenePromise;
+      }
+
+      async function createScene() {
         if (scene) return scene;
         const THREE = await import("three");
+        const relief = await import("../relief.js");
         const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
 
         const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -196,49 +200,13 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
         controls.maxDistance = 520;
         controls.maxPolarAngle = Math.PI * 0.49;
 
-        view.add(new THREE.AmbientLight(0xffffff, 0.42));
+        view.add(new THREE.HemisphereLight(0xffffff, 0xb0b5c0, 2));
         const key = new THREE.DirectionalLight(0xffffff, 0.85);
         key.position.set(70, 130, 90);
         view.add(key);
         const rim = new THREE.DirectionalLight(0xffffff, 0.25);
         rim.position.set(-90, 70, -70);
         view.add(rim);
-
-        // Pitch markings, flat on the floor: they are what makes it read as a pitch.
-        const lines = [];
-        const line = (x1, y1, x2, y2) => lines.push(x1, 0.05, y1, x2, 0.05, y2);
-        line(0, 0, 105, 0); line(105, 0, 105, 68);
-        line(105, 68, 0, 68); line(0, 68, 0, 0);
-        line(52.5, 0, 52.5, 68);
-        for (let a = 0; a <= 64; a++) {
-          const t1 = (a / 64) * Math.PI * 2, t2 = ((a + 1) / 64) * Math.PI * 2;
-          line(52.5 + 9.15 * Math.cos(t1), 34 + 9.15 * Math.sin(t1),
-               52.5 + 9.15 * Math.cos(t2), 34 + 9.15 * Math.sin(t2));
-        }
-        for (const side of [0, 1]) {
-          const x0 = side ? 105 : 0, dir = side ? -1 : 1;
-          const boxes = [[16.5, 40.32], [5.5, 18.32]];
-          for (const [depth, width] of boxes) {
-            const y1 = 34 - width / 2, y2 = 34 + width / 2;
-            line(x0, y1, x0 + dir * depth, y1);
-            line(x0 + dir * depth, y1, x0 + dir * depth, y2);
-            line(x0 + dir * depth, y2, x0, y2);
-          }
-          line(x0 + dir * 11, 34, x0 + dir * 11.6, 34);
-        }
-        const lineGeo = new THREE.BufferGeometry();
-        lineGeo.setAttribute("position", new THREE.Float32BufferAttribute(lines, 3));
-        view.add(new THREE.LineSegments(
-          lineGeo, new THREE.LineBasicMaterial({ color: 0x9aa0a6, transparent: true, opacity: 0.75 }),
-        ));
-
-        const floor = new THREE.Mesh(
-          new THREE.PlaneGeometry(105, 68),
-          new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }),
-        );
-        floor.rotation.x = -Math.PI / 2;
-        floor.position.set(52.5, -0.05, 34);
-        view.add(floor);
 
         const material = new THREE.MeshStandardMaterial({
           vertexColors: true, roughness: 0.9, metalness: 0.0, flatShading: false,
@@ -249,12 +217,13 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
           const h = stageEl.clientHeight || 1;
           renderer.setSize(w, h, false);
           camera.aspect = w / h;
+          camera.zoom = Math.min(1, camera.aspect / 1.5);
           camera.updateProjectionMatrix();
         }
         new ResizeObserver(fit).observe(stageEl);
         fit();
 
-        camera.position.set(118, 104, 118);
+        camera.position.set(145, 130, 145);
         controls.target.set(52.5, 6, 34);
         controls.update();
 
@@ -268,53 +237,144 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
           requestAnimationFrame(tick);
         })();
 
-        scene = { THREE, renderer, view, camera, controls, material, fit };
+        scene = { THREE, renderer, view, camera, controls, material, fit, relief };
         return scene;
       }
 
       /* ---------- geometry -> mesh ---------- */
       function drawGeometry(geo) {
         const { THREE, view, material } = scene;
-        const [nx, ny] = geo.shape;
-        const zMax = geo.z_max || 1;
-        const positions = [];
+        const { createRelief, HEIGHT_SCALE } = scene.relief;
+        const { geometry, baseHeight, topVertexCount, printScale } = createRelief(
+          geo, roundedEdges.checked, printSettings.length, printSettings.base,
+        );
         const colours = [];
-        const indices = [];
-
-        for (let i = 0; i < nx; i++) {
-          for (let j = 0; j < ny; j++) {
-            const z = geo.z[i][j];
-            positions.push(geo.x[i], z * HEIGHT_SCALE, geo.y[j]);   // three.js: Y is up
-            const [r, g, b] = turbo(z / zMax);
-            colours.push(r, g, b);
-          }
+        const positions = geometry.getAttribute("position");
+        for (let i = 0; i < positions.count; i++) {
+          const t = (positions.getY(i) - baseHeight) / HEIGHT_SCALE / (geo.z_max || 1);
+          const colour = i < topVertexCount ? turbo(t) : [0.72, 0.74, 0.77];
+          // Quiet low-activity areas reveal the pitch instead of a solid purple sheet.
+          const blend = i < topVertexCount ? Math.min(1, Math.max(0, t / 0.04)) : 1;
+          colours.push(...colour.map(c => 0.88 * (1 - blend) + c * blend));
         }
-        for (let i = 0; i < nx - 1; i++) {
-          for (let j = 0; j < ny - 1; j++) {
-            const a = i * ny + j, b = a + ny, c = b + 1, d = a + 1;
-            indices.push(a, d, b, d, c, b);          // wound so the normals face up
-          }
-        }
-
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 3));
-        geometry.setIndex(indices);
-        geometry.computeVertexNormals();
-
         if (surface) { view.remove(surface); surface.geometry.dispose(); }
         surface = new THREE.Mesh(geometry, material);
+        surface.userData.printScale = printScale;
         view.add(surface);
+
+        currentGeo = geo;
+        exportButton.disabled = !dimensionInputs.every(input => input.validity.valid);
+        roundedEdges.disabled = false;
+        monochrome.disabled = false;
+        applyPreviewColor();
       }
 
+      function applyPreviewColor() {
+        previewColor.disabled = !currentGeo || !monochrome.checked;
+        if (!scene) return;
+        const { material } = scene;
+        const vertexColors = !monochrome.checked;
+        if (material.vertexColors !== vertexColors) {
+          material.vertexColors = vertexColors;
+          material.needsUpdate = true;
+        }
+        material.color.set(monochrome.checked ? previewColor.value : "#ffffff");
+      }
+
+      monochrome.addEventListener("change", applyPreviewColor);
+      previewColor.addEventListener("input", applyPreviewColor);
+
+      function printAspect() {
+        const [length, width] = currentGeo?.pitch ?? [105, 68];
+        const overflow = roundedEdges.checked ? Math.min(length, width) * 0.1 : 0;
+        return (length + 2 * overflow) / (width + 2 * overflow);
+      }
+
+      function updateDimensions(changed) {
+        if (!changed.validity.valid) { exportButton.disabled = true; return; }
+        if (changed === printWidth) {
+          printSettings.length = printWidth.valueAsNumber * unitScale() * printAspect();
+          printLength.value = displayDimension(printSettings.length);
+        } else if (changed === printLength) {
+          printSettings.length = printLength.valueAsNumber * unitScale();
+          printWidth.value = displayDimension(printSettings.length / printAspect());
+        } else {
+          printSettings.base = baseThickness.valueAsNumber * unitScale();
+        }
+        const valid = dimensionInputs.every(input => input.validity.valid);
+        exportButton.disabled = !valid || !currentGeo;
+        if (valid) {
+          if (currentGeo) drawGeometry(currentGeo);
+        }
+      }
+      dimensionInputs.forEach(input => {
+        input.addEventListener("input", () => updateDimensions(input));
+        input.addEventListener("change", () => input.reportValidity());
+      });
+
+      printUnits.addEventListener("change", () => {
+        const invalid = dimensionInputs.find(input => !input.validity.valid);
+        if (invalid) {
+          printUnits.value = selectedUnit;
+          invalid.reportValidity();
+          return;
+        }
+        selectedUnit = printUnits.value;
+        for (const [input, min, max] of [[printLength, 10, 1000], [printWidth, 1, 1000], [baseThickness, 0.2, 50]]) {
+          input.min = String(min / unitScale());
+          input.max = String(max / unitScale());
+        }
+        for (const [input, mm] of [[printLength, printSettings.length], [printWidth, printSettings.length / printAspect()], [baseThickness, printSettings.base]]) {
+          input.value = String(Math.max(Number(input.min), Math.min(Number(input.max), Number(displayDimension(mm)))));
+        }
+      });
+
+      roundedEdges.addEventListener("change", () => {
+        if (!currentGeo) return;
+        printWidth.value = displayDimension(printSettings.length / printAspect());
+        if (dimensionInputs.every(input => input.validity.valid)) drawGeometry(currentGeo);
+        status.textContent = "";
+      });
+
+      exportButton.addEventListener("click", async () => {
+        if (!surface || !currentGeo) return;
+        const exportedGeo = currentGeo;
+        const mesh = surface.clone();
+        const printLengthMM = Number(printSettings.length.toFixed(4));
+        const edges = roundedEdges.checked ? "rounded" : "sharp";
+        exportButton.disabled = true;
+        try {
+          const { STLExporter } = await import("three/addons/exporters/STLExporter.js");
+          const scale = mesh.userData.printScale;
+          mesh.scale.setScalar(scale);
+          mesh.rotation.x = Math.PI / 2; // STL uses Z-up, in millimetres.
+          mesh.updateMatrixWorld(true);
+          const data = new STLExporter().parse(mesh, { binary: true });
+          const url = URL.createObjectURL(new Blob([data], { type: "model/stl" }));
+          const link = document.createElement("a");
+          link.href = url;
+          const name = exportedGeo.meta.player.replace(/[^a-z0-9]+/gi, "-");
+          link.download = `${name}-${exportedGeo.meta.map}-${edges}-${printLengthMM}mm.stl`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          if (currentGeo === exportedGeo) status.textContent = "STL downloaded.";
+        } catch (error) {
+          status.textContent = `Export failed: ${error.message}`;
+        } finally {
+          exportButton.disabled = !currentGeo || !dimensionInputs.every(input => input.validity.valid);
+        }
+      });
+
       /* ---------- fallback: a flat picture, if WebGL is out ---------- */
-      async function showFallback(query) {
-        const response = await fetch(build("/api/render", query));
+      async function showFallback(query, signal) {
+        const response = await fetch(build("/api/render", query), { signal });
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
           throw new Error(body.detail || `render failed (${response.status})`);
         }
         const blob = await response.blob();
+        signal.throwIfAborted();
         if (fallback.src.startsWith("blob:")) URL.revokeObjectURL(fallback.src);
         fallback.src = URL.createObjectURL(blob);
         fallback.hidden = false;
@@ -322,122 +382,179 @@ const field = "border border-neutral-400 bg-white px-2 py-1 w-full";
         hint.hidden = true;
       }
 
-      /* ---------- wiring ---------- */
-      async function loadTeams() {
-        const teams = await api("/api/teams", { competition: $("competition").value });
-        const select = $("team");
-        const previous = select.value;
-        fill(select, teams.teams, (team) => team, (team) => team, {
-          label: "any team",
-          value: "",
-        });
-        if (previous) select.value = previous;
+      /* ---------- selection and automatic preview ---------- */
+      function beginRequest() {
+        activeRequest?.abort();
+        activeRequest = new AbortController();
+        exportButton.disabled = true;
+        roundedEdges.disabled = true;
+        monochrome.disabled = true;
+        previewColor.disabled = true;
+        currentGeo = null;
+        $("retry").hidden = true;
+        stageEl.setAttribute("aria-busy", "true");
+        status.textContent = "Loading…";
+        return activeRequest.signal;
       }
 
-      async function loadMatches() {
-        const team = $("team").value;
-        const matches = await api("/api/matches", {
-          competition: $("competition").value,
-          ...(team ? { team } : {}),
-        });
-        fill(
-          $("match"),
-          matches,
-          (match) => match.match_id,
-          (match) => `${match.date} — ${match.home} v ${match.away}`,
-        );
-        await loadPlayers();
+      function clearPreview(message) {
+        canvas.hidden = true;
+        fallback.hidden = true;
+        hint.hidden = true;
+        caption.textContent = "";
+        $("empty").textContent = message;
+        $("empty").hidden = false;
       }
 
-      async function loadPlayers() {
-        const match = $("match").value;
-        if (!match) return;
+      async function runSelection(work) {
+        const signal = beginRequest();
         try {
-          const { players } = await api("/api/players", { match });
-          fill(
-            $("player-list"),
-            players.slice(0, 80),
-            (player) => player.name,
-            (player) => `${player.name} (${player.team}, ${player.events})`,
-          );
-          if (!playerInput.value && players.length) {
-            playerInput.placeholder = `e.g. ${players[0].name}`;
-          }
-        } catch {
-          /* suggestions are a nicety; rendering works without them */
+          await work(signal);
+        } catch (error) {
+          if (signal.aborted) return;
+          clearPreview("No model to show.");
+          status.textContent = error.message;
+          $("retry").hidden = false;
+        } finally {
+          if (!signal.aborted) stageEl.setAttribute("aria-busy", "false");
         }
       }
 
-      async function render(event) {
-        event.preventDefault();
-        const map = document.querySelector('input[name="map"]:checked').value;
+      async function render(signal) {
+        if (!matchSelect.value || !playerInput.value) {
+          clearPreview("Choose a player."); status.textContent = ""; return;
+        }
         const query = {
-          match: $("match").value,
-          player: playerInput.value.trim(),
-          map,
-          grid: "16x10",
-          sigma: "3.5",
+          match: matchSelect.value,
+          player: playerInput.value,
+          map: document.querySelector('input[name="map"]:checked').value,
+          grid: "16x10", sigma: "3.5",
           ...(renderVersion ? { v: renderVersion } : {}),
         };
-        if (!query.match || !query.player) {
-          status.textContent = "Pick a match and type a player name.";
+        const geo = await api("/api/geometry", query, signal);
+        signal.throwIfAborted();
+        try {
+          await ensureScene();
+          signal.throwIfAborted();
+          drawGeometry(geo);
+          if (dimensionInputs.every(input => input.validity.valid)) {
+            printWidth.value = displayDimension(printSettings.length / printAspect());
+          }
+          canvas.hidden = false;
+          fallback.hidden = true;
+          hint.hidden = false;
+        } catch (error) {
+          if (signal.aborted) throw error;
+          await showFallback(query, signal);
+        }
+        signal.throwIfAborted();
+        $("empty").hidden = true;
+        caption.textContent = `${geo.meta.player} · ${geo.meta.events} ${query.map === "touch" ? "touches" : "passes"}`
+          + (["Playing", "Paused"].includes(geo.status) ? " · Live" : "");
+        status.textContent = "";
+      }
+
+      async function loadPlayers(signal, previous = "") {
+        playerInput.disabled = true;
+        clearPreview("Choose a player.");
+        fill(playerInput, [], p => p.player_id, p => p.name, { label: "Loading players…", value: "" });
+        const map = document.querySelector('input[name="map"]:checked').value;
+        const { players } = await api("/api/players", { match: matchSelect.value, map }, signal);
+        signal.throwIfAborted();
+        const available = players.filter(player => player.events > 0);
+        // Team groups make the lineup easy to scan.
+        const groups = new Map();
+        for (const player of available) {
+          const team = player.team || "Players";
+          if (!groups.has(team)) {
+            const group = document.createElement("optgroup");
+            group.label = team; groups.set(team, group);
+          }
+          groups.get(team).appendChild(new Option(`${player.name} (${player.events})`, player.player_id));
+        }
+        playerInput.replaceChildren(new Option("Choose a player", ""), ...groups.values());
+        playerInput.disabled = available.length === 0;
+        if (!available.length) {
+          clearPreview("No players with this stat."); status.textContent = ""; return;
+        }
+        if (available.some(player => player.player_id === previous)) {
+          playerInput.value = previous;
+          await render(signal);
           return;
         }
+        status.textContent = "";
+      }
 
-        const started = performance.now();
-        status.textContent = "Rendering…";
-        try {
-          const geo = await api("/api/geometry", query);
-          try {
-            await ensureScene();
-            drawGeometry(geo);
-            canvas.hidden = false;
-            fallback.hidden = true;
-            hint.hidden = false;
-          } catch {
-            await showFallback(query);   // no WebGL: settle for a picture
-          }
+      function fillMatches(previous) {
+        fill(matchSelect, matches, match => match.match_id,
+          match => `${match.home} v ${match.away} · ${match.date}`,
+          { label: matches.length ? "Choose a match" : "No matches found", value: "" });
+        matchSelect.disabled = matches.length === 0;
+        if (matches.some(match => match.match_id === previous)) matchSelect.value = previous;
+      }
 
-          const ms = Math.round(performance.now() - started);
-          const { meta } = geo;
-          caption.textContent =
-            `${meta.player} — ${meta.map} map · ${meta.events} ` +
-            `${meta.events === 1 ? "event" : "events"} plotted of ${meta.total} · ` +
-            `${meta.grid} grid, σ ${meta.sigma} m · ${ms} ms`;
-          status.textContent = "Done.";
-        } catch (error) {
-          status.textContent = error.message;
-          caption.textContent = "No map to show for that combination.";
+      async function selectMatch(signal) {
+        playerInput.disabled = true;
+        if (!matchSelect.value) {
+          playerInput.replaceChildren(new Option("Choose a match", ""));
+          clearPreview(matchSelect.disabled ? "No matches found." : "Choose a match and player.");
+          status.textContent = ""; return;
+        }
+        await loadPlayers(signal);
+      }
+
+      async function loadMatches(signal) {
+        const previous = matchSelect.value;
+        const previousPlayer = playerInput.value;
+        matchSelect.disabled = true;
+        playerInput.disabled = true;
+        matches = await api("/api/matches", {
+          competition: $("competition").value, limit: "50", search: matchSearch.value.trim(),
+        }, signal);
+        signal.throwIfAborted();
+        matchSearch.disabled = false;
+        fillMatches(previous);
+        if (previous && matchSelect.value === previous && previousPlayer) {
+          await loadPlayers(signal, previousPlayer);
+        } else {
+          await selectMatch(signal);
         }
       }
 
-      $("controls").addEventListener("submit", render);
-      $("competition").addEventListener("change", async () => {
-        await loadTeams();
-        await loadMatches();
+      $("controls").addEventListener("submit", event => event.preventDefault());
+      $("competition").addEventListener("change", () => {
+        clearTimeout(searchTimer);
+        matchSearch.value = "";
+        runSelection(loadMatches);
       });
-      $("team").addEventListener("change", loadMatches);
-      $("match").addEventListener("change", loadPlayers);
+      matchSearch.addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => runSelection(loadMatches), 200);
+      });
+      matchSelect.addEventListener("change", () => runSelection(selectMatch));
+      playerInput.addEventListener("change", () => runSelection(render));
+      document.querySelectorAll('input[name="map"]').forEach(input => {
+        input.addEventListener("change", () => {
+          const previous = playerInput.value;
+          if (!matchSelect.disabled && matchSelect.value) {
+            runSelection(signal => loadPlayers(signal, previous));
+          }
+        });
+      });
+      $("retry").addEventListener("click", () => runSelection($("competition").value ? loadMatches : initialize));
 
-      (async () => {
-        try {
-          const response = await fetch(build("/api/competitions", {}));
-          renderVersion = response.headers.get("X-Render-Version") ?? "";
-          const competitions = await response.json();
-          fill(
-            $("competition"),
-            competitions,
-            (competition) => competition.slug,
-            (competition) => competition.label,
-          );
-          $("competition").value = "premier-league";
-          await loadTeams();
-          await loadMatches();
-          status.textContent = "Ready.";
-        } catch (error) {
-          status.textContent = `API unreachable at ${apiBase} — ${error.message}`;
-        }
-      })();
+      async function initialize(signal) {
+        const response = await fetch(build("/api/competitions", {}), { signal });
+        if (!response.ok) throw new Error("Could not load competitions.");
+        renderVersion = response.headers.get("X-Render-Version") ?? "";
+        const competitions = await response.json();
+        signal.throwIfAborted();
+        fill($("competition"), competitions, item => item.slug, item => item.label);
+        $("competition").value = "premier-league";
+        $("competition").disabled = false;
+        await loadMatches(signal);
+      }
+      runSelection(initialize);
     </script>
   </body>
 </html>

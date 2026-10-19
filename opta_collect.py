@@ -52,7 +52,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -202,6 +202,7 @@ def list_matches(tmcl: str) -> list[dict]:
                     "match_id": match.get("id"),
                     "date": (match.get("date") or "").rstrip("Z"),
                     "time": (match.get("time") or "").rstrip("Z"),
+                    "status": match.get("matchStatus"),
                     "home": match.get("homeContestantName"),
                     "away": match.get("awayContestantName"),
                     "competition": (payload.get("competition") or {}).get("name"),
@@ -212,11 +213,29 @@ def list_matches(tmcl: str) -> list[dict]:
     return fixtures
 
 
+def match_finished(payload: dict) -> bool:
+    return ((payload.get("liveData") or {}).get("matchDetails") or {}).get("matchStatus") == "Played"
+
+
+def fixture_started(fixture: dict) -> bool:
+    if fixture.get("status") in ("Postponed", "Cancelled", "Canceled"):
+        return False
+    if fixture.get("status") == "Played":
+        return True
+    try:
+        kickoff = datetime.fromisoformat(f"{fixture['date']}T{fixture.get('time') or '23:59:59'}".replace("Z", "+00:00"))
+    except (KeyError, ValueError, TypeError):
+        return False
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    return kickoff <= datetime.now(timezone.utc)
+
+
 def pick_match(tmcl: str, team: str | None, on_or_before: str | None) -> dict:
-    """Most recent fixture involving `team` (or the most recent fixture overall)."""
-    limit = on_or_before or date.today().isoformat()
+    """Most recent finished fixture involving `team`."""
+    limit = on_or_before or datetime.now(timezone.utc).date().isoformat()
     fixtures = [
-        f for f in list_matches(tmcl) if f["date"] and f["date"] <= limit
+        f for f in list_matches(tmcl) if f["date"] and f["date"] <= limit and fixture_started(f)
     ]
     if team:
         needle = team.strip().lower()
@@ -230,7 +249,10 @@ def pick_match(tmcl: str, team: str | None, on_or_before: str | None) -> dict:
             f"no match found for team={team!r} on or before {limit}; "
             "run the `matches` command to see what is available"
         )
-    return fixtures[-1]
+    for fixture in reversed(fixtures):
+        if fixture.get("status") == "Played" or match_finished(match_events(fixture["match_id"])):
+            return fixture
+    raise RuntimeError("no finished match found for those filters")
 
 
 # --------------------------------------------------------------------------- #
@@ -366,29 +388,31 @@ def lineup_players(lineups_payload: dict) -> list[dict]:
     return rows
 
 
+def match_players(events_payload: dict, lineups_payload: dict | None) -> list[dict]:
+    rows = lineup_players(lineups_payload or {})
+    seen = {row["player_id"] for row in rows}
+    teams = {team["id"]: team.get("name") for team in (events_payload.get("matchInfo") or {}).get("contestant", []) or []}
+    for event in (events_payload.get("liveData") or {}).get("event", []) or []:
+        player_id = event.get("playerId")
+        if not player_id or player_id in seen:
+            continue
+        seen.add(player_id)
+        name = event.get("playerName") or player_id
+        rows.append({
+            "player_id": player_id, "name": name, "full_name": name,
+            "team_id": event.get("contestantId"), "team": teams.get(event.get("contestantId")),
+            "position": None, "position_side": None, "shirt_number": None,
+        })
+    return rows
+
+
 def resolve_player(events_payload: dict, lineups_payload: dict | None, query: str) -> dict:
     """Find one player by id, or by name/id fragment from the match lineups."""
-    events = (events_payload.get("liveData") or {}).get("event", []) or []
-    match_info = events_payload.get("matchInfo") or {}
-    teams = {c["id"]: c.get("name") for c in match_info.get("contestant", []) or []}
-
-    rows = lineup_players(lineups_payload) if lineups_payload else []
+    rows = match_players(events_payload, lineups_payload)
     if re.fullmatch(r"[a-z0-9]{20,}", query):
         for row in rows:
             if row["player_id"] == query:
                 return row
-        for event in events:
-            if event.get("playerId") == query:
-                return {
-                    "player_id": query,
-                    "name": event.get("playerName"),
-                    "full_name": event.get("playerName"),
-                    "team_id": event.get("contestantId"),
-                    "team": teams.get(event.get("contestantId")),
-                    "position": None,
-                    "position_side": None,
-                    "shirt_number": None,
-                }
         raise RuntimeError(f"no player with id {query} in this match")
 
     needle = query.strip().lower()
@@ -398,27 +422,6 @@ def resolve_player(events_payload: dict, lineups_payload: dict | None, query: st
         if needle in (row["name"] or "").lower()
         or needle in (row["full_name"] or "").lower()
     ]
-    if not matches:
-        # Lineups can be missing for older matches; fall back to the event feed.
-        seen: dict[str, dict] = {}
-        for event in events:
-            name = event.get("playerName")
-            pid = event.get("playerId")
-            if name and pid and needle in name.lower():
-                seen.setdefault(
-                    pid,
-                    {
-                        "player_id": pid,
-                        "name": name,
-                        "full_name": name,
-                        "team_id": event.get("contestantId"),
-                        "team": teams.get(event.get("contestantId")),
-                        "position": None,
-                        "position_side": None,
-                        "shirt_number": None,
-                    },
-                )
-        matches = list(seen.values())
     if not matches:
         raise RuntimeError(f"no player matching {query!r} in this match")
     if len(matches) > 1:
@@ -441,7 +444,7 @@ def _base_point(event: dict) -> dict:
         "team_id": event.get("contestantId"),
         "type_id": event.get("typeId"),
     }
-    point.update(location(event.get("x", 0.0), event.get("y", 0.0)))
+    point.update(location(event["x"], event["y"]))
     return point
 
 
@@ -453,6 +456,8 @@ def shot_map(events: list[dict], player: dict, raw: bool = False) -> dict:
         if type_id not in SHOT_TYPES:
             continue
         if event.get("playerId") != player["player_id"]:
+            continue
+        if event.get("x") is None or event.get("y") is None:
             continue
         quals = qualifiers(event)
         point = _base_point(event)
@@ -529,6 +534,8 @@ def pass_map(
     for event in events:
         type_id = event.get("typeId")
         if type_id not in (1, 2) or event.get("playerId") != player["player_id"]:
+            continue
+        if event.get("x") is None or event.get("y") is None:
             continue
         quals = qualifiers(event)
         end_x = _as_float(quals.get(Q_PASS_END_X))
@@ -793,7 +800,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

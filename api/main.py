@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -51,9 +52,10 @@ PITCH_WIDTH_M = ph.PITCH_WIDTH_M
 CACHE_CONTROL = "public, max-age=31536000, immutable"
 # Bump when the drawing changes: it is part of the cache key, so old
 # immutable URLs in browser caches stop being reused.
-RENDER_VERSION = 5
+RENDER_VERSION = 7
 FIXTURE_TTL = 12 * 3600          # fixtures move slowly
-EVENT_TTL = 6 * 3600             # a live match keeps changing
+EVENT_TTL = 60                  # a live match keeps changing
+FINISHED_TTL = 10 * 365 * 24 * 3600
 _lock = threading.Lock()         # matplotlib is not thread-safe
 
 COMPETITIONS = {
@@ -68,8 +70,6 @@ COMPETITIONS = {
     "mls": "MLS",
     "saudi-pro-league": "Saudi Pro League",
 }
-
-MAPS = ("touch", "shot", "pass")
 
 # Opta event types. Shots are the four attempt types; passes are pass/offside pass.
 SHOT_TYPES = {13, 14, 15, 16}
@@ -88,30 +88,38 @@ def render_key(match: str, player: str, map_name: str, grid: str, sigma: float) 
     ).hexdigest()[:20]
 
 
-def cached_json(name: str, producer: Callable[[], dict], ttl: int) -> dict:
-    path = CACHE / f"{name}.json"
-    if path.exists() and time.time() - path.stat().st_mtime < ttl:
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
-    payload = producer()
+def write_cache(path: Path, payload: bytes) -> None:
     CACHE.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{int(time.time())}.tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(path)
+    with tempfile.NamedTemporaryFile(dir=CACHE, suffix=".tmp", delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(payload)
+            handle.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def cached_json(name: str, producer: Callable, ttl: int | Callable) -> dict | list:
+    path = CACHE / f"{name}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        lifetime = ttl(payload) if callable(ttl) else ttl
+        if time.time() - path.stat().st_mtime < lifetime:
+            return payload
+    except (OSError, json.JSONDecodeError):
+        pass
+    payload = producer()
+    write_cache(path, json.dumps(payload).encode("utf-8"))
     return payload
 
 
-def cached_bytes(name: str, producer: Callable[[], bytes]) -> bytes:
+def cached_bytes(name: str, producer: Callable[[], bytes], ttl: int = FINISHED_TTL) -> bytes:
     path = CACHE / name
-    if path.exists():
+    if path.exists() and time.time() - path.stat().st_mtime < ttl:
         return path.read_bytes()
     payload = producer()
-    CACHE.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{int(time.time())}.tmp")
-    tmp.write_bytes(payload)
-    tmp.replace(path)
+    write_cache(path, payload)
     return payload
 
 
@@ -137,10 +145,12 @@ def fixtures(competition: str) -> list[dict]:
 
 def match_payloads(match_id: str) -> tuple[dict, dict]:
     """The event feed and the lineups for one match, both cached."""
-    events = cached_json(f"events-{match_id}", lambda: oc.match_events(match_id), EVENT_TTL)
-    lineups = cached_json(
-        f"lineups-{match_id}", lambda: oc.match_lineups(match_id), EVENT_TTL
-    )
+    lifetime = lambda payload: FINISHED_TTL if oc.match_finished(payload) else EVENT_TTL
+    events = cached_json(f"events-{match_id}", lambda: oc.match_events(match_id), lifetime)
+    try:
+        lineups = cached_json(f"lineups-{match_id}", lambda: oc.match_lineups(match_id), lifetime)
+    except RuntimeError:
+        lineups = {}  # Event names still allow maps when optional lineups are unavailable.
     return events, lineups
 
 
@@ -158,9 +168,9 @@ def local_points(match_id: str, player_name: str, map_name: str):
         xs, ys = [], []
         for point in payload.get("points", []):
             x, y = point.get("x_m"), point.get("y_m")
-            if x is None and point.get("x") is not None:
+            if x is None and point.get("x") is not None and point.get("y") is not None:
                 x, y = point["x"] * PITCH_LENGTH_M / 100, point["y"] * PITCH_WIDTH_M / 100
-            if x is None:
+            if x is None or y is None:
                 continue
             if 0 <= x <= PITCH_LENGTH_M and 0 <= y <= PITCH_WIDTH_M:
                 xs.append(x)
@@ -197,10 +207,16 @@ def points_for(events_payload: dict, player: dict, map_name: str):
 # rendering
 # --------------------------------------------------------------------------- #
 
+def validate_grid(grid: str) -> tuple[int, int]:
+    try:
+        return ph.parse_grid(grid)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 def render_webp(xs: np.ndarray, ys: np.ndarray, grid: str, sigma: float) -> bytes:
     """A 3D surface of the same field: colour *and* height are events per cell."""
-    bins_x, _, bins_y = grid.lower().partition("x")
-    nx, ny = int(bins_x), int(bins_y or 16)
+    nx, ny = ph.parse_grid(grid)
 
     counts, x_edges, y_edges = np.histogram2d(
         xs, ys, bins=(nx, ny),
@@ -224,7 +240,6 @@ def render_webp(xs: np.ndarray, ys: np.ndarray, grid: str, sigma: float) -> byte
             grid_x, grid_y, surface, cmap="turbo", linewidth=0, antialiased=True,
             rstride=1, cstride=1, vmin=0.0, vmax=z_max,
         )
-        ph.draw_pitch_markings(ax, colour="#ffffff", alpha=0.55)
 
         ax.set_xlim(0, PITCH_LENGTH_M)
         ax.set_ylim(0, PITCH_WIDTH_M)
@@ -273,9 +288,7 @@ def competitions() -> Response:
     The client appends that version to image URLs: the responses are immutable,
     so the only way to retire an old picture is a new URL.
     """
-    import json as _json
-
-    body = _json.dumps([{"slug": slug, "label": label} for slug, label in COMPETITIONS.items()])
+    body = json.dumps([{"slug": slug, "label": label} for slug, label in COMPETITIONS.items()])
     return Response(
         content=body,
         media_type="application/json",
@@ -296,32 +309,42 @@ def matches(
     competition: str = Query(...),
     team: str | None = None,
     limit: int = Query(8, ge=1, le=50),
+    search: str = "",
 ) -> list[dict]:
-    today = time.strftime("%Y-%m-%d")
-    played = [f for f in fixtures(competition) if f["date"] and f["date"] <= today]
+    played = [f for f in fixtures(competition) if oc.fixture_started(f)]
     if team:
         needle = team.lower()
         played = [
             f for f in played
             if needle in (f["home"] or "").lower() or needle in (f["away"] or "").lower()
         ]
+    if search.strip():
+        needle = search.strip().lower()
+        played = [f for f in played if needle in f"{f['home']} {f['away']} {f['date']}".lower()]
     return list(reversed(played[-limit:]))
 
 
 @app.get("/api/players")
-def players(match: str = Query(...)) -> dict:
-    """Everyone in the match, busiest first — the search bar's suggestions."""
+def players(match: str = Query(...), map: Literal["touch", "shot", "pass"] = "touch") -> dict:
+    """Everyone in the match, sorted by their total for the selected stat."""
     events, lineups = match_payloads(match)
-    rows = oc.lineup_players(lineups)
+    rows = oc.match_players(events, lineups)
 
-    touches: dict[str, int] = {}
+    counts: dict[str, int] = {}
     for event in (events.get("liveData") or {}).get("event", []) or []:
         player_id = event.get("playerId")
-        if player_id and event.get("typeId") not in oc.NON_LOCATION_TYPES:
-            touches[player_id] = touches.get(player_id, 0) + 1
+        type_id = event.get("typeId")
+        if map == "shot" and type_id not in SHOT_TYPES:
+            continue
+        if map == "pass" and type_id not in PASS_TYPES:
+            continue
+        if map == "touch" and type_id in oc.NON_LOCATION_TYPES:
+            continue
+        if player_id:
+            counts[player_id] = counts.get(player_id, 0) + 1
 
     for row in rows:
-        row["events"] = touches.get(row["player_id"], 0)
+        row["events"] = counts.get(row["player_id"], 0)
     rows.sort(key=lambda row: -row["events"])
     return {"match": match, "players": rows}
 
@@ -340,6 +363,7 @@ def geometry(
     image: a few hundred floats is smaller than a picture and lets the browser
     rotate it. Cached on disk like everything else.
     """
+    nx, ny = validate_grid(grid)
     key = render_key(match, player, map, grid, sigma)
 
     def build() -> dict:
@@ -349,8 +373,6 @@ def geometry(
         if xs.size == 0:
             raise HTTPException(404, f"no {map} locations for {player} in that match")
 
-        bins_x, _, bins_y = grid.lower().partition("x")
-        nx, ny = int(bins_x), int(bins_y or 16)
         counts, x_edges, y_edges = np.histogram2d(
             xs, ys, bins=(nx, ny),
             range=((0.0, PITCH_LENGTH_M), (0.0, PITCH_WIDTH_M)),
@@ -358,6 +380,8 @@ def geometry(
         cell_x, cell_y = PITCH_LENGTH_M / nx, PITCH_WIDTH_M / ny
         surface = ph.smooth_grid(counts, sigma / cell_y, sigma / cell_x)
         return {
+            "finished": oc.match_finished(events),
+            "status": ((events.get("liveData") or {}).get("matchDetails") or {}).get("matchStatus"),
             "shape": [nx, ny],
             "x": [round(float(v), 2) for v in (x_edges[:-1] + x_edges[1:]) / 2],
             "y": [round(float(v), 2) for v in (y_edges[:-1] + y_edges[1:]) / 2],
@@ -372,7 +396,8 @@ def geometry(
         }
 
     try:
-        payload = cached_json(f"geo-{key}", build, ttl=10 * 365 * 24 * 3600)
+        payload = cached_json(f"geo-{key}", build,
+                              ttl=lambda value: FINISHED_TTL if value.get("finished") else EVENT_TTL)
     except HTTPException:
         raise
     except RuntimeError as error:
@@ -382,8 +407,8 @@ def geometry(
         content=body,
         media_type="application/json",
         headers={
-            "Cache-Control": CACHE_CONTROL,
-            "ETag": f'"{key}"',
+            "Cache-Control": CACHE_CONTROL if payload.get("finished") else f"public, max-age={EVENT_TTL}",
+            "ETag": f'"{hashlib.sha1(body.encode()).hexdigest()}"',
         },
     )
 
@@ -397,14 +422,16 @@ def render(
     grid: str = "16x10",
     sigma: float = Query(3.5, ge=0, le=20),
 ) -> Response:
+    validate_grid(grid)
     key = render_key(match, player, map, grid, sigma)
-    etag = f'"{key}"'
 
     def build() -> bytes:
+        finished = False
         try:
             events, lineups = match_payloads(match)
             resolved = oc.resolve_player(events, lineups, player)
             xs, ys, total = points_for(events, resolved, map)
+            finished = oc.match_finished(events)
         except HTTPException:
             raise
         except RuntimeError as error:          # unknown/ambiguous player, bad match
@@ -419,20 +446,32 @@ def render(
             raise HTTPException(404, f"no {map} locations for {player} in that match")
 
         meta = {
+            "finished": finished,
             "match_id": match, "player": resolved.get("name", player), "map": map,
             "events": int(xs.size), "total": int(total), "grid": grid, "sigma": sigma,
         }
         image = render_webp(xs, ys, grid, sigma)
-        cached_bytes(f"meta-{key}.json", lambda: json.dumps(meta).encode())
+        write_cache(CACHE / f"meta-{key}.json", json.dumps(meta).encode())
         return image
 
-    was_cached = (CACHE / f"render-{key}.webp").exists()
-    if was_cached and request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": CACHE_CONTROL})
+    def lifetime() -> int:
+        try:
+            meta = json.loads((CACHE / f"meta-{key}.json").read_text())
+            return FINISHED_TTL if meta.get("finished") else EVENT_TTL
+        except (OSError, json.JSONDecodeError):
+            return EVENT_TTL
 
-    image = cached_bytes(f"render-{key}.webp", build)
+    path = CACHE / f"render-{key}.webp"
+    ttl = lifetime()
+    was_cached = path.exists() and time.time() - path.stat().st_mtime < ttl
+    image = cached_bytes(f"render-{key}.webp", build, ttl=ttl)
+    etag = f'"{hashlib.sha1(image).hexdigest()}"'
+    cache_control = CACHE_CONTROL if lifetime() == FINISHED_TTL else f"public, max-age={EVENT_TTL}"
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": cache_control})
+
     headers = {
-        "Cache-Control": CACHE_CONTROL,
+        "Cache-Control": cache_control,
         "ETag": etag,
         "X-Render": "disk" if was_cached else "fresh",
         "Access-Control-Expose-Headers": "ETag, X-Render",

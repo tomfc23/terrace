@@ -3,6 +3,7 @@
 // so a selection is shareable and survives a reload.
 
 import { DESIGNS } from "./designs.js";
+import { latestMeshLoader } from "./latest-load.js";
 
 const STORE_KEY = "soccer-modeling:chosen";
 
@@ -114,28 +115,20 @@ async function startViewer() {
     controls.saveState();      // so "reset view" returns to this fitted view
   }
 
-  function show(design) {
-    return new Promise((resolve) => {
-      loader.load(design.file, (geometry) => {
-        const radius = place(geometry);
-        if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
-        if (grid) scene.remove(grid);
-
-        mesh = new THREE.Mesh(geometry, material);
-        scene.add(mesh);
-
-        const span = Math.max(design.size[0], design.size[1]) * 1.35;
-        grid = new THREE.GridHelper(span, 10, 0x6f7683, 0x3b4149);
-        grid.material.opacity = 0.3;
-        grid.material.transparent = true;
-        scene.add(grid);
-
-        mesh.scale.y = exaggeration;
-        fitCamera(design, radius);
-        resolve();
-      }, undefined, () => resolve());   // a failed load leaves the note in place
-    });
-  }
+  const show = latestMeshLoader(loader, (geometry, design) => {
+    const radius = place(geometry);
+    if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+    if (grid) { scene.remove(grid); grid.geometry.dispose(); grid.material.dispose(); }
+    mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+    const span = Math.max(design.size[0], design.size[1]) * 1.35;
+    grid = new THREE.GridHelper(span, 10, 0x6f7683, 0x3b4149);
+    grid.material.opacity = 0.3;
+    grid.material.transparent = true;
+    scene.add(grid);
+    mesh.scale.y = exaggeration;
+    fitCamera(design, radius);
+  });
 
   (function loop() {
     controls.update();
@@ -208,14 +201,26 @@ function select(id, { hash = false } = {}) {
   if (viewer) {
     noteEl.textContent = "loading mesh…";
     noteEl.classList.remove("hidden");
-    viewer.show(design).then(() => noteEl.classList.add("hidden"));
+    viewer.show(design).then(loaded => {
+      if (current?.id !== design.id) return;
+      if (loaded) noteEl.classList.add("hidden");
+      else showFallback(design);
+    });
   } else if (fallback) {
-    noteEl.innerHTML =
-      `<div><img src="${design.thumb}" alt="">` +
-      `<p>The 3D viewer needs WebGL and a CDN for three.js, so this is the flat preview of ` +
-      `<b>${design.title}</b>. Selection, commands and the rest of the page still work.</p></div>`;
+    showFallback(design);
   }
   paint();
+}
+
+function showFallback(design) {
+  noteEl.classList.remove("hidden");
+  const image = document.createElement("img");
+  image.src = design.thumb; image.alt = design.title;
+  const message = document.createElement("p");
+  message.textContent = "3D preview unavailable. Showing the image instead.";
+  const content = document.createElement("div");
+  content.append(image, message);
+  noteEl.replaceChildren(content);
 }
 
 function choose(id) {
