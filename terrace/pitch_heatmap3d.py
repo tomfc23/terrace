@@ -18,11 +18,11 @@ How the surface is built
 
 Usage
 -----
-    python pitch_heatmap3d.py --list                        # what data is available
-    python pitch_heatmap3d.py --player "Wirtz" --map touch   # one player, one map
-    python pitch_heatmap3d.py --player "Wirtz"               # all of that player's maps
-    python pitch_heatmap3d.py --map shot --all               # every shot file in data/
-    python pitch_heatmap3d.py --player "Wirtz" --map pass \
+    python -m terrace.pitch_heatmap3d --list                        # what data is available
+    python -m terrace.pitch_heatmap3d --player "Wirtz" --map touch   # one player, one map
+    python -m terrace.pitch_heatmap3d --player "Wirtz"               # all of that player's maps
+    python -m terrace.pitch_heatmap3d --map shot --all               # every shot file in data/
+    python -m terrace.pitch_heatmap3d --player "Wirtz" --map pass \
         --include-pass-ends --sigma 4 --output plots/wirtz_pass.png
 """
 

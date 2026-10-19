@@ -3,12 +3,15 @@
 __pycache__/
 *.py[cod]
 
-# Generated heat maps and printable meshes (regenerate with the scripts)
+# Secrets
+.env*
+*.pem
+
+# Generated heat maps, printable meshes and per-user collected match data
+# (regenerate with the scripts)
 plots/
 models/
-
-# Collected JSON in data/ is intentionally tracked: it is the input to the
-# heat maps and small enough to version.
+data/
 
 # Editors / OS
 .DS_Store
@@ -22,3 +25,14 @@ web/.astro/
 
 # FastAPI disk cache (match feeds and rendered maps)
 api/.cache/
+
+# Browser regression artifacts
+output/playwright/
+
+# Local tests and test tooling
+tests/
+test_*.py
+*_test.py
+*.test.*
+*.spec.*
+web/playwright.config.js

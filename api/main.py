@@ -19,6 +19,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import re
 import sys
 import tempfile
 import threading
@@ -27,7 +29,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:          # opta_collect / pitch_heatmap3d live there
+if str(ROOT) not in sys.path:          # the terrace package lives there
     sys.path.insert(0, str(ROOT))
 
 import matplotlib
@@ -41,8 +43,8 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
-import opta_collect as oc  # noqa: E402
-import pitch_heatmap3d as ph  # noqa: E402
+from terrace import opta_collect as oc  # noqa: E402
+from terrace import pitch_heatmap3d as ph  # noqa: E402
 
 CACHE = ROOT / "api" / ".cache"
 DATA = ROOT / "data"
@@ -79,6 +81,15 @@ PASS_TYPES = {1, 2}
 # --------------------------------------------------------------------------- #
 # disk cache
 # --------------------------------------------------------------------------- #
+
+_SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+
+
+def safe_key(value: str) -> str:
+    """Cache- and glob-safe id: real match ids pass through unchanged, anything
+    else is hashed so a request value can never name a path segment."""
+    return value if _SAFE_ID.fullmatch(value) else "h" + hashlib.sha1(value.encode()).hexdigest()[:20]
+
 
 def render_key(match: str, player: str, map_name: str, grid: str, sigma: float) -> str:
     """Cache key for a rendered map. Includes RENDER_VERSION so a change to the
@@ -145,10 +156,11 @@ def fixtures(competition: str) -> list[dict]:
 
 def match_payloads(match_id: str) -> tuple[dict, dict]:
     """The event feed and the lineups for one match, both cached."""
+    key = safe_key(match_id)
     lifetime = lambda payload: FINISHED_TTL if oc.match_finished(payload) else EVENT_TTL
-    events = cached_json(f"events-{match_id}", lambda: oc.match_events(match_id), lifetime)
+    events = cached_json(f"events-{key}", lambda: oc.match_events(match_id), lifetime)
     try:
-        lineups = cached_json(f"lineups-{match_id}", lambda: oc.match_lineups(match_id), lifetime)
+        lineups = cached_json(f"lineups-{key}", lambda: oc.match_lineups(match_id), lifetime)
     except RuntimeError:
         lineups = {}  # Event names still allow maps when optional lineups are unavailable.
     return events, lineups
@@ -156,7 +168,7 @@ def match_payloads(match_id: str) -> tuple[dict, dict]:
 
 def local_points(match_id: str, player_name: str, map_name: str):
     """Fallback: a previously collected file for this match, if we have one."""
-    for path in DATA.glob(f"*_{match_id}_{map_name}.json"):
+    for path in DATA.glob(f"*_{safe_key(match_id)}_{map_name}.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -265,12 +277,19 @@ def render_webp(xs: np.ndarray, ys: np.ndarray, grid: str, sigma: float) -> byte
 # app
 # --------------------------------------------------------------------------- #
 
-app = FastAPI(title="Opta heat maps", docs_url=None, redoc_url=None)
+# Extra browser origin to accept for CORS, e.g. a Tailscale address when testing
+# from another device: TERRACE_ORIGIN=100.x.y.z ./run.sh
+EXTRA_ORIGIN = os.environ.get("TERRACE_ORIGIN", "").strip()
+ORIGIN_HOSTS = r"localhost|127\.0\.0\.1|192\.168\.\d+\.\d+"
+if EXTRA_ORIGIN:
+    ORIGIN_HOSTS += "|" + re.escape(EXTRA_ORIGIN)
+
+app = FastAPI(title="Terrace", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)   # html/css/json, not webp
 app.add_middleware(
     CORSMiddleware,
     # Only needed for `astro dev`; the built site is served same-origin below.
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|100\.73\.136\.110|192\.168\.\d+\.\d+)(:\d+)?",
+    allow_origin_regex=rf"http://({ORIGIN_HOSTS})(:\d+)?",
     allow_methods=["GET"],
     allow_headers=["*"],
 )

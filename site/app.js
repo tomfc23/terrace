@@ -39,7 +39,7 @@ function save(key, value) {
 
 function buildCommand(design) {
   const flags = design.flags ? ` ${design.flags}` : "";
-  return `uv run python pitch_print.py build --player "Wirtz" --map touch \\\n`
+  return `uv run python -m terrace.pitch_print build --player "Wirtz" --map touch \\\n`
        + `  --style terrain${flags} --name design_${design.id}`;
 }
 

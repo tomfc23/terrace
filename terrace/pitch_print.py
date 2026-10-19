@@ -18,10 +18,10 @@ wound the right way round for a slicer.
 
 Usage
 -----
-    python pitch_print.py styles                       # list the presets
-    python pitch_print.py sheet  --player Wirtz --map touch
-    python pitch_print.py build  --player Wirtz --map touch --style skyline
-    python pitch_print.py build  --player Wirtz --map touch \
+    python -m terrace.pitch_print styles                       # list the presets
+    python -m terrace.pitch_print sheet  --player Wirtz --map touch
+    python -m terrace.pitch_print build  --player Wirtz --map touch --style skyline
+    python -m terrace.pitch_print build  --player Wirtz --map touch \
         --height-mm 18 --cutoff 0.25 --compression sqrt --levels 6 --stl models/x.stl
 
 Outputs go to models/ (STL) and plots/ (previews). Import with any slicer at
@@ -37,7 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
-import pitch_heatmap3d as ph  # reuse the loader, binning and smoothing
+from terrace import pitch_heatmap3d as ph  # reuse the loader, binning and smoothing
 
 MODEL_DIR = Path("models")
 PLOT_DIR = Path("plots")

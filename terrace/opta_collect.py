@@ -27,16 +27,16 @@ discarded; only the location-bearing / meaning-bearing ones are kept (pass the
 Usage
 -----
     # which matches are available for a competition (most recent first)
-    python opta_collect.py matches --competition premier-league --team Liverpool
-    python opta_collect.py matches --competition premier-league --limit 8
+    python -m terrace.opta_collect matches --competition premier-league --team Liverpool
+    python -m terrace.opta_collect matches --competition premier-league --limit 8
 
     # who played in a match (ids, positions, touches)
-    python opta_collect.py players --match 4h8foczvol1zhy7usmy11maz8
+    python -m terrace.opta_collect players --match 4h8foczvol1zhy7usmy11maz8
 
     # the maps: shot map, touch map, pass map for one player
-    python opta_collect.py maps --player "Salah" --match 4h8foczvol1zhy7usmy11maz8
-    python opta_collect.py maps --player "Salah" --match 4h8f... --maps shot,pass
-    python opta_collect.py maps --player "Salah" --competition premier-league \
+    python -m terrace.opta_collect maps --player "Salah" --match 4h8foczvol1zhy7usmy11maz8
+    python -m terrace.opta_collect maps --player "Salah" --match 4h8f... --maps shot,pass
+    python -m terrace.opta_collect maps --player "Salah" --competition premier-league \
         --team Liverpool            # picks the most recent finished match
 
 Output lands in `data/` as `data/{player}_{match_id}_{map}.json`.
